@@ -257,58 +257,27 @@ where
     /// item occurs exactly once; and (ii) every secondary item
     /// has been assigned at most one color. See Knuth §§7.2.2.1,3.
     // TODO: yield solutions one at a time.
-    pub fn solve(&mut self) -> Result<Vec<Options<T, C>>, XccError<T, C>> {
+    pub fn solve(&self) -> Result<Vec<Options<T, C>>, XccError<T, C>> {
         let n = self.items.len();
         let m = self.options.len();
         let mut trail = Trail::new();
         let mut solution = Solution::new();
         let mut solutions = Solutions::new();
-        let mut active_items = ActiveItems::new(0..n);
-        let mut active_options = (0..n)
+        let mut items = ActiveItems::new(0..n);
+        let mut options = (0..n)
             .map(|i| (0..m).filter(|&o| self.is_involved(o, i, 0)).collect())
             .collect::<ActiveOptions>();
 
         // Knuth 7.2.2.1-(9), 7.2.2.1X,C, 7.2.2.3C.
         loop {
-            if let Some((item, option)) = self.choose(&active_items, &active_options) {
-                if self.trace {
-                    eprintln!(
-                        "** Covering item {} with option {}",
-                        self.format_item(item),
-                        self.format_option(option),
-                    );
-                }
-                self.cover(
-                    item,
-                    option,
-                    &mut trail,
-                    &mut active_items,
-                    &mut active_options,
-                )?;
-                for &sibling in self.involved(option) {
-                    self.hide(
-                        sibling,
-                        self.color(sibling, option),
-                        &mut active_items,
-                        &mut active_options,
-                    );
-                }
-                self.trace_state("after covering", &active_items, &active_options);
-
+            if let Some((item, option)) = self.choose(&items, &options) {
+                self.cover(item, option, &mut trail, &mut items, &mut options)?;
                 solution.push(option);
-                if active_items.is_empty() {
-                    solutions.push(solution);
-                    solution = Solution::new();
+                if items.is_empty() {
+                    solutions.push(solution.drain(..).collect());
                 }
-            } else if !self.backtrack(
-                &mut trail,
-                &mut solution,
-                &mut active_items,
-                &mut active_options,
-            ) {
+            } else if !self.backtrack(&mut trail, &mut solution, &mut items, &mut options) {
                 break;
-            } else {
-                self.trace_state("after backtracking", &active_items, &active_options);
             }
         }
 
@@ -379,8 +348,9 @@ where
             })
     }
 
-    /// Having chosen `option` to cover `item`, delete it from the active options
-    /// and record a trail entry if there are any remaining ways to cover `item`.
+    /// Having chosen `option` to cover `item`, delete it from the active options,
+    /// record a trail entry if there are any remaining ways to cover `item`, and
+    /// hide all siblings of `item` in `option`.
     fn cover(
         &self,
         item: usize,
@@ -389,6 +359,14 @@ where
         active_items: &mut ActiveItems,
         active_options: &mut ActiveOptions,
     ) -> Result<(), XccError<T, C>> {
+        if self.trace {
+            eprintln!(
+                "** Covering item {} with option {}",
+                self.format_item(item),
+                self.format_option(option),
+            );
+        }
+
         assert!(self.is_primary(item), "can't choose a secondary item");
         assert!(
             active_options[item].delete(&option),
@@ -396,16 +374,23 @@ where
             self.format_option(option),
             self.format_item(item),
         );
-
         if active_options[item].is_empty() {
-            Ok(assert!(
+            assert!(
                 active_items.delete(&item),
                 "item {} is already inactive",
                 self.format_item(item)
-            ))
+            );
         } else {
-            self.trail(trail, active_items, active_options)
+            self.trail(trail, active_items, active_options)?;
         }
+
+        for &sibling in self.involved(option) {
+            let color = self.color(sibling, option);
+            self.hide(sibling, color, active_items, active_options);
+        }
+
+        self.trace_state("after covering", active_items, active_options);
+        Ok(())
     }
 
     /// Deactivate `item` and all active options that involve it.
@@ -442,8 +427,8 @@ where
         }
     }
 
-    /// Restore the active state from the last trail entry and
-    /// return `true`, or return `false` if the trail is empty.
+    /// Restore the active state from the last trail entry and return `true`,
+    /// or `false` if the trail is empty.
     fn backtrack(
         &self,
         trail: &mut Trail,
@@ -463,6 +448,7 @@ where
                 todo!("check {keep}");
             }
             solution.truncate(keep);
+            self.trace_state("after backtracking", active_items, active_options);
             true
         } else {
             false
@@ -587,7 +573,7 @@ mod test {
         builder.parse_primary_items(["a"]).unwrap();
         builder.parse_option(["a"]).unwrap();
         builder.trace(false).unwrap();
-        let mut xc = builder.build().unwrap();
+        let xc = builder.build().unwrap();
         let solutions = xc.solve().unwrap();
         assert_eq!(solutions.len(), 1);
         assert_eq!(sol!(solutions, 0, 0), ["a"]);
@@ -600,7 +586,7 @@ mod test {
         builder.parse_option(["a"]).unwrap();
         builder.parse_option(["b"]).unwrap();
         builder.trace(false).unwrap();
-        let mut xc = builder.build().unwrap();
+        let xc = builder.build().unwrap();
         let solutions = xc.solve().unwrap();
         assert_eq!(solutions.len(), 1);
         assert_eq!(solutions[0].len(), 2);
@@ -616,7 +602,7 @@ mod test {
         builder.parse_option(["b"]).unwrap();
         builder.parse_option(["a", "b"]).unwrap();
         builder.trace(false).unwrap();
-        let mut xc = builder.build().unwrap();
+        let xc = builder.build().unwrap();
         let solutions = xc.solve().unwrap();
         assert_eq!(solutions.len(), 2);
         assert_eq!(solutions[0].len(), 2);
@@ -640,7 +626,7 @@ mod test {
         builder.parse_option(["b", "g"]).unwrap();
         builder.parse_option(["d", "e", "g"]).unwrap();
         builder.trace(false).unwrap();
-        let mut xc = builder.build().unwrap();
+        let xc = builder.build().unwrap();
         let solutions = xc.solve().unwrap();
         assert_eq!(solutions.len(), 1);
         assert_eq!(solutions[0].len(), 3);
@@ -661,7 +647,7 @@ mod test {
         builder.parse_option(["q", "x:A"]).unwrap();
         builder.parse_option(["r", "y:B"]).unwrap();
         builder.trace(false).unwrap();
-        let mut xcc = builder.build().unwrap();
+        let xcc = builder.build().unwrap();
         let solutions = xcc.solve().unwrap();
         assert_eq!(solutions.len(), 1);
         assert_eq!(solutions[0].len(), 2);
