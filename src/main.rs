@@ -3,10 +3,12 @@ mod solver;
 mod domain;
 
 use builder::XccBuilder;
-use solver::{print_solutions, XccError};
+use solver::XccError;
 
 fn main() -> Result<(), XccError<String, String>> {
-    let xcc = XccBuilder::new();
-    print_solutions(xcc.build()?.solve()?);
+    let mut builder = XccBuilder::new();
+    builder.trace(true).unwrap();
+    let mut xcc = builder.build()?;
+    let _solutions = xcc.solve()?;
     Ok(())
 }

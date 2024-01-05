@@ -33,6 +33,7 @@ pub struct XccBuilder<T: Hash + Eq, C: Hash + Eq> {
     names: HashMap<T, bool>,
     items: Items<T, C>,
     options: Options<T, C>,
+    trace: bool,
 }
 
 fn parse_name(name: impl ToString) -> Result<String, BuildError<String>> {
@@ -63,6 +64,11 @@ impl<'a> XccBuilder<String, String> {
             return Err(BuildError::NoPrimaryItems);
         }
         self.options.push(option);
+        Ok(())
+    }
+
+    pub fn trace(&mut self, trace: bool) -> Result<(), BuildError<String>> {
+        self.trace = trace;
         Ok(())
     }
 
@@ -124,7 +130,7 @@ impl<'a> XccBuilder<String, String> {
     }
 
     pub fn build(self) -> Result<DancingCells<String, String>, XccError<String, String>> {
-        DancingCells::new(self.items, self.options)
+        DancingCells::new(self.items, self.options, self.trace)
     }
 }
 

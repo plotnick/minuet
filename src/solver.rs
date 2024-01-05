@@ -145,6 +145,9 @@ pub struct DancingCells<T: Hash + Eq, C: Hash + Eq> {
     /// Which options involve what items, by id. Never changed;
     /// determines item involvement and sibling relations.
     option_items: OptionItems,
+
+    /// Whether or not to log status messages to standard error.
+    trace: bool,
 }
 
 impl<T, C> DancingCells<T, C>
@@ -152,7 +155,11 @@ where
     T: Clone + Hash + Eq + fmt::Debug + fmt::Display,
     C: Clone + Hash + Eq + fmt::Debug + fmt::Display,
 {
-    pub fn new(items: Items<T, C>, options: Options<T, C>) -> Result<Self, XccError<T, C>> {
+    pub fn new(
+        items: Items<T, C>,
+        options: Options<T, C>,
+        trace: bool,
+    ) -> Result<Self, XccError<T, C>> {
         if options.is_empty() {
             return Err(XccError::NoOptions);
         }
@@ -184,6 +191,7 @@ where
             items,
             options,
             option_items,
+            trace,
         })
     }
 
@@ -205,6 +213,13 @@ where
         // Knuth 7.2.2.1-(9), 7.2.2.1X,C, 7.2.2.3C.
         loop {
             if let Some((item, option)) = self.choose(&active_items, &active_options) {
+                if self.trace {
+                    eprintln!(
+                        "** Covering item {} with option {}",
+                        self.format_item(item),
+                        self.format_option(option),
+                    );
+                }
                 self.cover(
                     item,
                     option,
@@ -215,6 +230,7 @@ where
                 for &sibling in self.involved(option) {
                     self.hide(sibling, 0, &mut active_items, &mut active_options);
                 }
+                self.trace_state("after covering", &active_items, &active_options);
 
                 solution.push(option);
                 if active_items.is_empty() {
@@ -228,10 +244,13 @@ where
                 &mut active_options,
             ) {
                 break;
+            } else {
+                self.trace_state("after backtracking", &active_items, &active_options);
             }
         }
 
         // Map solutions from ids back into options.
+        self.trace_solutions(&solutions);
         Ok(solutions
             .into_iter()
             .map(|options: Vec<usize>| {
@@ -257,14 +276,18 @@ where
     /// (MRV) heuristic (viz., the item with the smallest positive number
     /// of active options), or `None` if there is no such item; then select
     /// the first active option for that item.
-    fn choose(&self, items: &ActiveItems, options: &ActiveOptions) -> Option<(usize, usize)> {
-        items
+    fn choose(
+        &self,
+        active_items: &ActiveItems,
+        active_options: &ActiveOptions,
+    ) -> Option<(usize, usize)> {
+        active_items
             .iter()
             .filter_map(|&item| {
-                if options[item].is_empty() {
+                if active_options[item].is_empty() {
                     None
                 } else {
-                    Some((item, &options[item]))
+                    Some((item, &active_options[item]))
                 }
             })
             .min_by_key(|(_item, options)| options.len())
@@ -284,9 +307,18 @@ where
         active_items: &mut ActiveItems,
         active_options: &mut ActiveOptions,
     ) -> Result<(), XccError<T, C>> {
-        assert!(active_options[item].delete(&option), "{option} inactive");
+        assert!(
+            active_options[item].delete(&option),
+            "option {} is inactive, so cannot cover item {}",
+            self.format_option(option),
+            self.format_item(item),
+        );
         if active_options[item].is_empty() {
-            Ok(assert!(active_items.delete(&item), "{item} inactive"))
+            Ok(assert!(
+                active_items.delete(&item),
+                "item {} is already inactive",
+                self.format_item(item)
+            ))
         } else {
             self.trail(trail, active_items, active_options)
         }
@@ -340,7 +372,7 @@ where
             let keep = active_items.len().saturating_sub(n);
             active_items.restore(n);
             for &(i, m) in options.iter() {
-                assert!(m > 0, "no active options for {i}");
+                assert!(m > 0, "no active options for {}", self.format_item(i));
                 active_options[i].restore(m);
             }
             if keep > 0 {
@@ -353,66 +385,76 @@ where
         }
     }
 
-    #[allow(dead_code)]
-    fn print_active(&self, when: &'static str, items: &ActiveItems, options: &ActiveOptions) {
-        println!(
-            "** Active items {when}: {{{}}}, options {{{}}}",
-            items
-                .iter()
-                .map(|&i| self.items[i].name())
-                .collect::<Vec<_>>()
-                .join(", "),
-            options
-                .iter()
-                .enumerate()
-                .map(|(i, options)| {
-                    format!(
-                        "{} => {{{}}}",
-                        self.items[i].name(),
+    /// If tracing is active, write a description of the active items & options to stderr.
+    fn trace_state(&self, when: &'static str, items: &ActiveItems, options: &ActiveOptions) {
+        if self.trace {
+            eprintln!(
+                "** Active items {when}: {{{}}}; options {{{}}}",
+                items
+                    .iter()
+                    .map(|&i| self.format_item(i))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                options
+                    .iter()
+                    .enumerate()
+                    .map(|(i, options)| {
+                        format!(
+                            "{} => {{{}}}",
+                            self.format_item(i),
+                            options
+                                .iter()
+                                .map(|&o| self.format_option(o))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+    }
+
+    /// If tracing is active, write a set of solutions to stderr.
+    pub fn trace_solutions(&self, solutions: &Vec<Vec<usize>>) {
+        if self.trace {
+            eprintln!(
+                "* Got {} solution(s):\n* {}",
+                solutions.len(),
+                solutions
+                    .iter()
+                    .map(|options| {
                         options
                             .iter()
-                            .map(|&o| {
-                                format!(
-                                    "{}",
-                                    self.options[o]
-                                        .iter()
-                                        .map(ToString::to_string)
-                                        .collect::<Vec<_>>()
-                                        .join(" ")
-                                )
-                            })
+                            .map(|&o| self.format_option(o))
                             .collect::<Vec<_>>()
                             .join(", ")
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-    }
-}
-
-// TODO: Prettier printing.
-pub fn print_solutions(solutions: Vec<Options<String, String>>) -> Vec<Options<String, String>> {
-    println!("* Got {} solution(s):", solutions.len());
-    for solution in &solutions {
-        for option in solution {
-            println!(
-                "* {}",
-                option
-                    .iter()
-                    .map(ToString::to_string)
+                    })
                     .collect::<Vec<_>>()
-                    .join(" ")
+                    .join("\n* ")
             );
         }
-        println!("*");
     }
-    solutions
+
+    fn format_item(&self, item: usize) -> String {
+        self.items[item].name()
+    }
+
+    fn format_option(&self, option: usize) -> String {
+        format!(
+            "[{}]",
+            self.options[option]
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use super::{print_solutions, XccError};
+    use super::XccError;
     use crate::builder::XccBuilder;
 
     /// Invalid exact covering problems.
@@ -451,6 +493,7 @@ mod test {
         let mut builder = XccBuilder::new();
         builder.parse_primary_items(["a"]).unwrap();
         builder.parse_option(["a"]).unwrap();
+        builder.trace(false).unwrap();
         let mut xc = builder.build().unwrap();
         let solutions = xc.solve().unwrap();
         assert_eq!(solutions.len(), 1);
@@ -463,6 +506,7 @@ mod test {
         builder.parse_primary_items(["a", "b"]).unwrap();
         builder.parse_option(["a"]).unwrap();
         builder.parse_option(["b"]).unwrap();
+        builder.trace(false).unwrap();
         let mut xc = builder.build().unwrap();
         let solutions = xc.solve().unwrap();
         assert_eq!(solutions.len(), 1);
@@ -478,8 +522,9 @@ mod test {
         builder.parse_option(["a"]).unwrap();
         builder.parse_option(["b"]).unwrap();
         builder.parse_option(["a", "b"]).unwrap();
+        builder.trace(false).unwrap();
         let mut xc = builder.build().unwrap();
-        let solutions = print_solutions(xc.solve().unwrap());
+        let solutions = xc.solve().unwrap();
         assert_eq!(solutions.len(), 2);
         assert_eq!(solutions[0].len(), 2);
         assert_eq!(sol!(solutions, 0, 0), ["a"]);
@@ -495,14 +540,15 @@ mod test {
         builder
             .parse_primary_items(["a", "b", "c", "d", "e", "f", "g"])
             .unwrap();
-        builder.parse_option(["c", "e"]).unwrap(); // 0
-        builder.parse_option(["a", "d", "g"]).unwrap(); // 1
-        builder.parse_option(["b", "c", "f"]).unwrap(); // 2
-        builder.parse_option(["a", "d", "f"]).unwrap(); // 3
-        builder.parse_option(["b", "g"]).unwrap(); // 4
-        builder.parse_option(["d", "e", "g"]).unwrap(); // 5
+        builder.parse_option(["c", "e"]).unwrap();
+        builder.parse_option(["a", "d", "g"]).unwrap();
+        builder.parse_option(["b", "c", "f"]).unwrap();
+        builder.parse_option(["a", "d", "f"]).unwrap();
+        builder.parse_option(["b", "g"]).unwrap();
+        builder.parse_option(["d", "e", "g"]).unwrap();
+        builder.trace(false).unwrap();
         let mut xc = builder.build().unwrap();
-        let solutions = print_solutions(xc.solve().unwrap());
+        let solutions = xc.solve().unwrap();
         assert_eq!(solutions.len(), 1);
         assert_eq!(solutions[0].len(), 3);
         assert_eq!(sol!(solutions, 0, 0), ["a", "d", "f"]);
@@ -521,11 +567,9 @@ mod test {
         builder.parse_option(["p", "x:B"]).unwrap();
         builder.parse_option(["q", "x:A"]).unwrap();
         builder.parse_option(["r", "y:B"]).unwrap();
-        //dbg!(&builder);
-
+        builder.trace(false).unwrap();
         let mut xcc = builder.build().unwrap();
-        //dbg!(xcc);
-        print_solutions(xcc.solve().unwrap());
+        let _solutions = xcc.solve().unwrap();
         todo!("check toy XCC solutions");
     }
 }
