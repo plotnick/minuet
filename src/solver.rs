@@ -10,7 +10,7 @@
 //! are the options. Domains are represented using sparse sets with
 //! reversible memory for fast backtracking.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::string::ToString;
@@ -56,6 +56,10 @@ where
             Self::Primary(_name) => true,
             Self::Secondary(_name, _color) => false,
         }
+    }
+
+    pub fn is_secondary(&self) -> bool {
+        !self.is_primary()
     }
 }
 
@@ -112,9 +116,10 @@ where
     NoOptions,
     #[error("Primary item {0} is not used in any option, so no solutions are possible")]
     PrimaryItemNotUsed(Item<T, C>),
-    #[allow(dead_code)]
     #[error("Primary item {0} appears more than once in option {1}")]
     PrimaryItemUsedTwice(Item<T, C>, Items<T, C>),
+    #[error("Secondary item {0} inconsistently colored in option {1}")]
+    SecondaryItemInconsistentlyColored(Item<T, C>, Items<T, C>),
     #[error("Trail exceeded maximum size of {0}")]
     TrailOverflow(usize),
 }
@@ -125,6 +130,7 @@ const MAX_TRAIL_LEN: usize = 1_000;
 // Internal types use item & option ids.
 type ActiveItems = SparseIntegerSet<usize>;
 type ActiveOptions = Vec<SparseIntegerSet<usize>>;
+type ColorMap = HashMap<(usize, usize), usize>;
 type OptionItems = Vec<SparseIntegerSet<usize>>;
 type Solution = Vec<usize>;
 type Solutions = Vec<Solution>;
@@ -146,6 +152,15 @@ pub struct DancingCells<T: Hash + Eq, C: Hash + Eq> {
     /// determines item involvement and sibling relations.
     option_items: OptionItems,
 
+    /// The colors with which secondary items appear in options,
+    /// indexed by `(option_id, item_id)` pairs. Never changed;
+    /// used to consistently color secondary items.
+    colors: ColorMap,
+
+    /// The smallest id designating a secondary item. Never changed;
+    /// determines which items are considered primary or secondary.
+    second: usize,
+
     /// Whether or not to log status messages to standard error.
     trace: bool,
 }
@@ -156,13 +171,14 @@ where
     C: Clone + Hash + Eq + fmt::Debug + fmt::Display,
 {
     pub fn new(
-        items: Items<T, C>,
+        mut items: Items<T, C>,
         options: Options<T, C>,
         trace: bool,
     ) -> Result<Self, XccError<T, C>> {
         if options.is_empty() {
             return Err(XccError::NoOptions);
         }
+
         for item in items.iter() {
             if item.is_primary()
                 && !options
@@ -172,7 +188,13 @@ where
                 return Err(XccError::PrimaryItemNotUsed(item.to_owned()));
             }
         }
-        // TODO: Check that no item appears more than once in the same option.
+
+        // Make primary items precede secondary ones, and record the boundary.
+        items.sort_by_key(Item::is_secondary);
+        let second = items
+            .iter()
+            .position(Item::is_secondary)
+            .unwrap_or(usize::MAX);
 
         // Map item → id.
         let item_ids = items
@@ -181,16 +203,52 @@ where
             .map(|(index, item)| (item, index))
             .collect::<HashMap<&Item<T, C>, usize>>();
 
-        // Which options involve what items, by id.
-        let option_items = options
-            .iter()
-            .map(|option| option.iter().map(|item| item_ids[item]).collect())
-            .collect::<OptionItems>();
+        // Record (by id) which options involve what items and how they are
+        // colored. Check as we go that within an option, no primary item
+        // appears more than once and all secondary items are consistently
+        // colored.
+        let mut color_ids = HashMap::<&C, usize>::new();
+        let mut option_items = OptionItems::new();
+        let mut colors = ColorMap::new();
+        let mut uniq_items = HashSet::<usize>::new();
+        let mut uniq_colors = HashMap::<usize, usize>::new();
+        for (o, option) in options.iter().enumerate() {
+            uniq_items.clear();
+            let ids = SparseIntegerSet::new(option.iter().map(|i| item_ids[i]));
+            for &i in ids.iter() {
+                if i < second && !uniq_items.insert(i) {
+                    return Err(XccError::PrimaryItemUsedTwice(
+                        items[i].clone(),
+                        option.clone(),
+                    ));
+                }
+            }
+            option_items.push(ids);
+
+            uniq_colors.clear();
+            for item in option {
+                if let Some(color) = item.color() {
+                    let i = item_ids[item];
+                    let n = color_ids.len() + 1; // 0 = unique color
+                    let c = *color_ids.entry(&color).or_insert(n);
+                    if uniq_colors.insert(i, c).is_none() {
+                        colors.insert((o, i), c);
+                    } else {
+                        return Err(XccError::SecondaryItemInconsistentlyColored(
+                            items[i].clone(),
+                            option.clone(),
+                        ));
+                    }
+                }
+            }
+        }
 
         Ok(Self {
             items,
             options,
             option_items,
+            colors,
+            second,
             trace,
         })
     }
@@ -207,7 +265,7 @@ where
         let mut solutions = Solutions::new();
         let mut active_items = ActiveItems::new(0..n);
         let mut active_options = (0..n)
-            .map(|i| (0..m).filter(|&o| self.is_involved(o, i)).collect())
+            .map(|i| (0..m).filter(|&o| self.is_involved(o, i, 0)).collect())
             .collect::<ActiveOptions>();
 
         // Knuth 7.2.2.1-(9), 7.2.2.1X,C, 7.2.2.3C.
@@ -228,7 +286,12 @@ where
                     &mut active_options,
                 )?;
                 for &sibling in self.involved(option) {
-                    self.hide(sibling, 0, &mut active_items, &mut active_options);
+                    self.hide(
+                        sibling,
+                        self.color(sibling, option),
+                        &mut active_items,
+                        &mut active_options,
+                    );
                 }
                 self.trace_state("after covering", &active_items, &active_options);
 
@@ -262,20 +325,39 @@ where
             .collect::<Vec<Options<T, C>>>())
     }
 
+    /// Look up how `item` is colored in `option`. Return a color id,
+    /// or `0` if it is not assigned a color there (or is primary).
+    fn color(&self, option: usize, item: usize) -> usize {
+        self.colors.get(&(option, item)).copied().unwrap_or(0)
+    }
+
     /// Visit the items that are involved with (contained by) `option`.
     fn involved(&self, option: usize) -> impl Iterator<Item = &usize> {
         self.option_items[option].iter()
     }
 
-    /// Does `option` involve (contain) `item`?
-    fn is_involved(&self, option: usize, item: usize) -> bool {
+    /// Does `option` involve (contain) `item` with (optional, other) `color`?
+    /// The complemented color condition lets us use this predicate to delete
+    /// conflicting options.
+    fn is_involved(&self, option: usize, item: usize, color: usize) -> bool {
         self.option_items[option].contains(&item)
+            && (self.is_primary(item) || self.color(option, item) != color)
     }
 
-    /// Choose an active item to cover using the *minimum remaining values*
-    /// (MRV) heuristic (viz., the item with the smallest positive number
-    /// of active options), or `None` if there is no such item; then select
-    /// the first active option for that item.
+    /// Is `item` a primary (mandatory, uncolored) item?
+    fn is_primary(&self, item: usize) -> bool {
+        item < self.second
+    }
+
+    /// Is `item` a secondary (optional, colored) item?
+    fn is_secondary(&self, item: usize) -> bool {
+        !self.is_primary(item)
+    }
+
+    /// Choose an active primary item to cover using the *minimum remaining
+    /// values* (MRV) heuristic (viz., the item with the smallest positive
+    /// number of active options), or `None` if there is no such item; then
+    /// select the first active option for that item.
     fn choose(
         &self,
         active_items: &ActiveItems,
@@ -284,7 +366,7 @@ where
         active_items
             .iter()
             .filter_map(|&item| {
-                if active_options[item].is_empty() {
+                if self.is_secondary(item) || active_options[item].is_empty() {
                     None
                 } else {
                     Some((item, &active_options[item]))
@@ -292,7 +374,7 @@ where
             })
             .min_by_key(|(_item, options)| options.len())
             .map(|(item, options)| {
-                let option = options.first().expect("an active item should have options");
+                let option = options.first().expect("active items should have options");
                 (item, option)
             })
     }
@@ -307,12 +389,14 @@ where
         active_items: &mut ActiveItems,
         active_options: &mut ActiveOptions,
     ) -> Result<(), XccError<T, C>> {
+        assert!(self.is_primary(item), "can't choose a secondary item");
         assert!(
             active_options[item].delete(&option),
-            "option {} is inactive, so cannot cover item {}",
+            "option {} is inactive, so can't cover item {}",
             self.format_option(option),
             self.format_item(item),
         );
+
         if active_options[item].is_empty() {
             Ok(assert!(
                 active_items.delete(&item),
@@ -328,12 +412,12 @@ where
     fn hide(
         &self,
         item: usize,
-        _color: usize,
+        color: usize,
         active_items: &mut ActiveItems,
         active_options: &mut ActiveOptions,
     ) {
         for &other in active_items.iter() {
-            active_options[other].delete_if(|&option| self.is_involved(option, item));
+            active_options[other].delete_if(|&option| self.is_involved(option, item, color));
         }
         active_items.delete(&item);
     }
@@ -457,26 +541,35 @@ mod test {
     use super::XccError;
     use crate::builder::XccBuilder;
 
-    /// Invalid exact covering problems.
+    /// Detect invalid problems.
     #[test]
-    fn invalid_xc() {
+    fn invalid_xcc() {
         let builder = XccBuilder::new();
         assert!(matches!(builder.build(), Err(XccError::NoOptions)));
 
-        /*let mut builder = XccBuilder::new();
-        builder.parse_primary_items(["x"]).unwrap();
-        builder.parse_option(["x", "x"]).unwrap();
-        assert!(matches!(
-            builder.build(),
-            Err(XccError::PrimaryItemUsedTwice(_, _))
-        ));*/
-
         let mut builder = XccBuilder::new();
-        builder.parse_primary_items(["x", "y"]).unwrap();
-        builder.parse_option(["x"]).unwrap();
+        builder.parse_primary_items(["a", "b"]).unwrap();
+        builder.parse_option(["a"]).unwrap();
         assert!(matches!(
             builder.build(),
             Err(XccError::PrimaryItemNotUsed(_))
+        ));
+
+        let mut builder = XccBuilder::new();
+        builder.parse_primary_items(["a"]).unwrap();
+        builder.parse_option(["a", "a"]).unwrap();
+        assert!(matches!(
+            builder.build(),
+            Err(XccError::PrimaryItemUsedTwice(_, _))
+        ));
+
+        let mut builder = XccBuilder::new();
+        builder.parse_primary_items(["a"]).unwrap();
+        builder.parse_secondary_items(["x"]).unwrap();
+        builder.parse_option(["a", "x", "x:X", "x:Y"]).unwrap();
+        assert!(matches!(
+            builder.build(),
+            Err(XccError::SecondaryItemInconsistentlyColored(_, _))
         ));
     }
 
@@ -569,7 +662,10 @@ mod test {
         builder.parse_option(["r", "y:B"]).unwrap();
         builder.trace(false).unwrap();
         let mut xcc = builder.build().unwrap();
-        let _solutions = xcc.solve().unwrap();
-        todo!("check toy XCC solutions");
+        let solutions = xcc.solve().unwrap();
+        assert_eq!(solutions.len(), 1);
+        assert_eq!(solutions[0].len(), 2);
+        assert_eq!(sol!(solutions, 0, 0), ["q", "x:A"]);
+        assert_eq!(sol!(solutions, 0, 1), ["p", "r", "x:A", "y"]);
     }
 }
