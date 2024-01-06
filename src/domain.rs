@@ -105,13 +105,15 @@ pub mod uint {
         }
 
         // TODO: move to the trait, if possible
-        pub fn delete_if(&mut self, mut f: impl FnMut(&T) -> bool) {
-            for i in 0..self.len {
+        pub fn delete_if(&mut self, mut f: impl FnMut(&T) -> bool) -> &[T] {
+            let n = self.len;
+            for i in (0..self.len).rev() {
                 let x = self.dom[i]; // copy
                 if f(&x) {
                     self.delete(&x);
                 }
             }
+            self.deleted(n)
         }
 
         #[allow(dead_code)]

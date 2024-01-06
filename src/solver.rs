@@ -274,7 +274,7 @@ where
                 self.cover(item, option, &mut trail, &mut items, &mut options)?;
                 solution.push(option);
                 if items.is_empty() {
-                    solutions.push(solution.drain(..).collect());
+                    solutions.push(solution.clone());
                 }
             } else if !self.backtrack(&mut trail, &mut solution, &mut items, &mut options) {
                 break;
@@ -438,16 +438,16 @@ where
     ) -> bool {
         if let Some((n, options)) = trail.pop() {
             assert!(n > 0, "no active items on trail");
-            let keep = active_items.len().saturating_sub(n);
             active_items.restore(n);
             for &(i, m) in options.iter() {
                 assert!(m > 0, "no active options for {}", self.format_item(i));
                 active_options[i].restore(m);
             }
-            if keep > 0 {
-                todo!("check {keep}");
-            }
-            solution.truncate(keep);
+            solution.retain(|&o| {
+                !self.involved(o)
+                    .into_iter()
+                    .all(|i| active_items.contains(i))
+            });
             self.trace_state("after backtracking", active_items, active_options);
             true
         } else {
@@ -524,7 +524,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use super::XccError;
+    use super::{DancingCells, Item, XccError};
     use crate::builder::XccBuilder;
 
     /// Detect invalid problems.
@@ -653,5 +653,29 @@ mod test {
         assert_eq!(solutions[0].len(), 2);
         assert_eq!(sol!(solutions, 0, 0), ["q", "x:A"]);
         assert_eq!(sol!(solutions, 0, 1), ["p", "r", "x:A", "y"]);
+    }
+
+    /// "Extreme" XC problem: Knuth 7.2.2.1-(82).
+    /// All _2^n - 1_ possible options on _n_ primary items.
+    #[test]
+    fn extreme_xc() {
+        let n = 8;
+        let items = (0..n)
+            .map(|i| Item::<usize, usize>::Primary(i))
+            .collect::<Vec<_>>();
+        let options = gray_codes::VecSubsets::of(&items)
+            .into_iter()
+            .map(|x| x.into_iter().cloned().collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+        let xc = DancingCells::new(items.clone(), options, false).unwrap();
+        let solutions = xc.solve().unwrap();
+        for solution in solutions {
+            let mut solution = solution.into_iter().flatten().collect::<Vec<_>>();
+            solution.sort_by_key(|item| match item {
+                Item::Primary(t) => *t,
+                Item::Secondary(_t, _c) => unreachable!("no secondary items"),
+            });
+            assert_eq!(&solution, &items);
+        }
     }
 }
