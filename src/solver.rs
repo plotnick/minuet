@@ -2,7 +2,7 @@
 //! (Knuth §§7.2.2.1,3, Christmas Lectures 2018,23).
 //!
 //! A finite set of *items* is to be exactly covered by a finite
-//! subset of *options* (not to be confused with Rust `Option`s).
+//! subset of *options* (not to be confused with Rust's `Option`).
 //! *Primary items* are to be covered exactly once; *secondary items*
 //! may be covered more than once, but must match in *color* across
 //! options. Any CSP or SAT problem may be formulated using XCC;
@@ -19,6 +19,10 @@ use thiserror::Error;
 
 use crate::domain::{Domain, SparseIntegerSet};
 
+/// A primary or secondary item. The `Hash` requirement is so that the
+/// solver can build an item → id map and operate on integers internally
+/// instead of instances. Solutions are decoded back to `Item` instances
+/// as they are found.
 #[derive(Clone, Debug, Eq)]
 pub enum Item<T: Hash + Eq, C: Hash + Eq> {
     /// An item that must be covered exactly once.
@@ -29,7 +33,10 @@ pub enum Item<T: Hash + Eq, C: Hash + Eq> {
     Secondary(T, Option<C>),
 }
 
+/// An option (but not a Rust `Option`) is a subset of items.
 pub type Items<T, C> = Vec<Item<T, C>>;
+
+/// And a solution is a set of options.
 pub type Options<T, C> = Vec<Items<T, C>>;
 
 impl<T, C> Item<T, C>
@@ -112,6 +119,8 @@ where
     T: Hash + Eq + fmt::Display,
     C: Hash + Eq + fmt::Display,
 {
+    #[error("No more solutions")]
+    NoMoreSolutions,
     #[error("No options declared")]
     NoOptions,
     #[error("Primary item {0} is not used in any option, so no solutions are possible")]
@@ -125,6 +134,9 @@ where
 }
 
 /// Maximum length of the backtracking trail through the search space.
+/// Measured in entries, not items or options; each entry contains a
+/// few fixed sizes and a vector of sizes whose length is the number
+/// of currently active items.
 const MAX_TRAIL_LEN: usize = 1_000;
 
 // Internal types use item & option ids.
@@ -133,43 +145,39 @@ type ActiveOptions = Vec<SparseIntegerSet<usize>>;
 type ColorMap = HashMap<(usize, usize), usize>;
 type OptionItems = Vec<SparseIntegerSet<usize>>;
 type Solution = Vec<usize>;
-type Solutions = Vec<Solution>;
 type Trail = Vec<(usize, usize, Vec<(usize, usize)>)>;
 
-/// XCC solver à la Knuth §7.2.2.3.
+/// XCC solver à la Knuth §7.2.2.3. The tables here are initialized
+/// once and never changed; all mutable state is relegated to the
+/// `DanceState` structure, and the search procedure is controlled
+/// by the `DanceStep` iterator. But all of the algorithm-specific
+/// logic is implemented on this structure.
 #[must_use]
 #[derive(Debug)]
 pub struct DancingCells<T: Hash + Eq, C: Hash + Eq> {
-    /// The given items, in the given order. Never changed;
-    /// ids are assigned by their position here.
+    /// The given items, in the given order.
+    /// Item ids are assigned by their position here.
     items: Items<T, C>,
 
     /// The given options (lists of items), in the given order.
-    /// Never changed; ids are assigned by their position here.
+    /// Option ids are assigned by their position here.
     options: Options<T, C>,
 
-    /// Which options involve what items, by id. Never changed;
-    /// determines item involvement and sibling relations.
+    /// Which options involve what items, by id. Determines
+    /// item involvement and sibling relations in an option.
     option_items: OptionItems,
 
     /// The colors with which secondary items appear in options,
-    /// indexed by `(option_id, item_id)` pairs. Never changed;
-    /// used to consistently color secondary items.
+    /// indexed by `(option_id, item_id)` pairs. Used to ensure
+    /// consistently colored secondary items.
     colors: ColorMap,
 
-    /// The smallest id designating a secondary item. Never changed;
-    /// determines which items are considered primary or secondary.
+    /// The smallest id designating a secondary item.
+    /// Determines which items are considered primary.
     second: usize,
 
     /// Whether or not to log status messages to standard error.
     trace: bool,
-}
-
-struct DanceState {
-    trail: Trail,
-    solution: Solution,
-    active_items: ActiveItems,
-    active_options: ActiveOptions,
 }
 
 impl<T, C> DancingCells<T, C>
@@ -177,15 +185,17 @@ where
     T: Clone + Hash + Eq + fmt::Debug + fmt::Display,
     C: Clone + Hash + Eq + fmt::Debug + fmt::Display,
 {
+    /// Check and initialize the XCC problem, but do not solve it yet.
     pub fn new(
         mut items: Items<T, C>,
         options: Options<T, C>,
         trace: bool,
     ) -> Result<Self, XccError<T, C>> {
+        // Basic problem checks. The solver will behave badly if any
+        // of these assumptions are violated.
         if options.is_empty() {
             return Err(XccError::NoOptions);
         }
-
         for item in items.iter() {
             if item.is_primary()
                 && !options
@@ -260,14 +270,13 @@ where
         })
     }
 
-    /// Choose subsets of the options such that (i) every primary
-    /// item occurs exactly once; and (ii) every secondary item
-    /// has been assigned at most one color. See Knuth §§7.2.2.1,3.
-    // TODO: yield solutions one at a time.
-    pub fn solve(&self) -> Result<Vec<Options<T, C>>, XccError<T, C>> {
+    /// Solve the XCC problem: search for subsets of the options such that
+    /// (i) every primary item occurs exactly once; and (ii) every secondary
+    /// item is assigned at most one color. See Knuth §§7.2.2.1,3.
+    pub fn solve(&self) -> DanceStep<T, C> {
         let n = self.items.len();
         let m = self.options.len();
-        let mut state = DanceState {
+        let state = DanceState {
             trail: Trail::new(),
             solution: Solution::new(),
             active_items: ActiveItems::new(0..n),
@@ -275,31 +284,30 @@ where
                 .map(|i| (0..m).filter(|&o| self.is_involved(o, i, 0)).collect())
                 .collect::<ActiveOptions>(),
         };
-        let mut solutions = Solutions::new();
+        DanceStep::new(self, state)
+    }
 
-        // Knuth 7.2.2.1-(9), 7.2.2.1X,C, 7.2.2.3C.
+    /// Find the next solution. See Knuth 7.2.2.1-(9), 7.2.2.1X,C, 7.2.2.3C.
+    fn step(&self, state: &mut DanceState) -> Result<Options<T, C>, XccError<T, C>> {
         loop {
-            if let Some((item, option)) = self.choose(&state) {
-                self.cover(item, option, &mut state)?;
+            if let Some((item, option)) = self.choose(state) {
+                self.cover(item, option, state)?;
                 if state.active_items.is_empty() {
-                    solutions.push(state.solution.clone());
+                    return Ok(self.decode_solution(&state.solution));
                 }
-            } else if !self.backtrack(&mut state) {
-                break;
+            } else if !self.backtrack(state) {
+                return Err(XccError::NoMoreSolutions);
             }
         }
+    }
 
-        // Map solutions from ids back into options.
-        self.trace_solutions(&solutions);
-        Ok(solutions
+    /// Decode a set of option ids into (cloned) options.
+    fn decode_solution(&self, solution: &Solution) -> Options<T, C> {
+        self.trace_solution(solution);
+        solution
             .into_iter()
-            .map(|options: Vec<usize>| {
-                options
-                    .into_iter()
-                    .map(|option| self.options[option].clone())
-                    .collect::<Options<T, C>>()
-            })
-            .collect::<Vec<Options<T, C>>>())
+            .map(|&option| self.options[option].clone())
+            .collect()
     }
 
     /// Look up how `item` is colored in `option`. Return a color id,
@@ -359,20 +367,14 @@ where
             })
     }
 
-    /// Having chosen `option` to cover `item`, delete it from the active options,
-    /// record a trail entry if there are any remaining ways to cover `item`, and
-    /// hide all siblings of `item` in `option`.
+    /// Having chosen `option` to cover `item`, delete it from the set of
+    /// active options, record a trail entry if there are any remaining
+    /// ways to cover `item`, and hide all siblings of `item` in `option`.
     fn cover(
         &self,
         item: usize,
         option: usize,
-        DanceState {
-            trail,
-            solution,
-            active_items,
-            active_options,
-            ..
-        }: &mut DanceState,
+        state: &mut DanceState,
     ) -> Result<(), XccError<T, C>> {
         if self.trace {
             eprintln!(
@@ -384,51 +386,38 @@ where
 
         assert!(self.is_primary(item), "can't choose a secondary item");
         assert!(
-            active_options[item].delete(&option),
+            state.active_options[item].delete(&option),
             "option {} is inactive, so can't cover item {}",
             self.format_option(option),
             self.format_item(item),
         );
-        if active_options[item].is_empty() {
-            assert!(
-                active_items.delete(&item),
-                "item {} is already inactive",
-                self.format_item(item)
-            );
-        } else {
-            self.trail(trail, solution, active_items, active_options)?;
+        if !state.active_options[item].is_empty() {
+            self.trail(state)?;
         }
 
         for &sibling in self.involved(option) {
             let color = self.color(sibling, option);
-            self.hide(sibling, color, active_items, active_options);
+            for &other in state.active_items.iter() {
+                state.active_options[other]
+                    .delete_if(|&option| self.is_involved(option, sibling, color));
+            }
+            state.active_items.delete(&sibling);
         }
 
-        self.trace_state("after covering", active_items, active_options);
-        Ok(solution.push(option))
-    }
-
-    /// Deactivate `item` and all active options that involve it.
-    fn hide(
-        &self,
-        item: usize,
-        color: usize,
-        active_items: &mut ActiveItems,
-        active_options: &mut ActiveOptions,
-    ) {
-        for &other in active_items.iter() {
-            active_options[other].delete_if(|&option| self.is_involved(option, item, color));
-        }
-        active_items.delete(&item);
+        self.trace_state("after covering", &state.active_items, &state.active_options);
+        Ok(state.solution.push(option))
     }
 
     /// Save the active state in the trail for backtracking.
     fn trail(
         &self,
-        trail: &mut Trail,
-        solution: &Solution,
-        active_items: &ActiveItems,
-        active_options: &ActiveOptions,
+        DanceState {
+            trail,
+            solution,
+            active_items,
+            active_options,
+            ..
+        }: &mut DanceState,
     ) -> Result<(), XccError<T, C>> {
         if trail.len() >= MAX_TRAIL_LEN {
             Err(XccError::TrailOverflow(MAX_TRAIL_LEN))
@@ -456,8 +445,8 @@ where
         }: &mut DanceState,
     ) -> bool {
         if let Some((s, n, options)) = trail.pop() {
-            solution.truncate(s);
             assert!(n > 0, "no active items on trail");
+            solution.truncate(s);
             active_items.restore(n);
             for &(i, m) in options.iter() {
                 assert!(m > 0, "no active options for {}", self.format_item(i));
@@ -500,23 +489,16 @@ where
         };
     }
 
-    /// If tracing is active, write a set of solutions to stderr.
-    pub fn trace_solutions(&self, solutions: &Vec<Vec<usize>>) {
+    /// If tracing is active, write a solution to stderr.
+    pub fn trace_solution<'a>(&self, solution: &'a Solution) {
         if self.trace {
             eprintln!(
-                "* Got {} solution(s):\n* {}",
-                solutions.len(),
-                solutions
+                "* Got a solution: {}",
+                solution
                     .iter()
-                    .map(|options| {
-                        options
-                            .iter()
-                            .map(|&o| self.format_option(o))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    })
+                    .map(|&o| self.format_option(o))
                     .collect::<Vec<_>>()
-                    .join("\n* ")
+                    .join(", ")
             );
         }
     }
@@ -537,9 +519,61 @@ where
     }
 }
 
+/// All active state associated with a search for solutions
+/// to an XCC problem. The solver will reference and modify
+/// this data, but not own it.
+struct DanceState {
+    trail: Trail,
+    solution: Solution,
+    active_items: ActiveItems,
+    active_options: ActiveOptions,
+}
+
+/// An iterator over all solutions to an XCC problem. Each iteration
+/// finds the next solution; termination, accumulation, and inspection
+/// of solutions may be done by the standard methods on `Iterator`.
+/// Owns all of the mutable search state and drives the search via
+/// a shared reference to the solver, but implements no search logic
+/// other than "stop when no more solutions are available".
+pub struct DanceStep<'a, T, C>
+where
+    T: Clone + Hash + Eq + fmt::Debug + fmt::Display,
+    C: Clone + Hash + Eq + fmt::Debug + fmt::Display,
+{
+    solver: &'a DancingCells<T, C>,
+    state: DanceState,
+}
+
+impl<'a, T, C> DanceStep<'a, T, C>
+where
+    T: Clone + Hash + Eq + fmt::Debug + fmt::Display,
+    C: Clone + Hash + Eq + fmt::Debug + fmt::Display,
+{
+    fn new(solver: &'a DancingCells<T, C>, state: DanceState) -> Self {
+        Self { solver, state }
+    }
+}
+
+impl<'a, T, C> Iterator for DanceStep<'a, T, C>
+where
+    T: Clone + Hash + Eq + fmt::Debug + fmt::Display,
+    C: Clone + Hash + Eq + fmt::Debug + fmt::Display,
+{
+    type Item = Result<Options<T, C>, XccError<T, C>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.solver.step(&mut self.state) {
+            Err(XccError::NoMoreSolutions) => None,
+            solution => Some(solution),
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use super::{DancingCells, Item, XccError};
+    use std::collections::HashSet;
+
+    use super::{DancingCells, Item, Options, XccError};
     use crate::builder::XccBuilder;
 
     /// Detect invalid problems.
@@ -589,7 +623,7 @@ mod test {
         builder.parse_option(["a"]).unwrap();
         builder.trace(false).unwrap();
         let xc = builder.build().unwrap();
-        let solutions = xc.solve().unwrap();
+        let solutions = xc.solve().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(solutions.len(), 1);
         assert_eq!(sol!(solutions, 0, 0), ["a"]);
     }
@@ -602,7 +636,7 @@ mod test {
         builder.parse_option(["b"]).unwrap();
         builder.trace(false).unwrap();
         let xc = builder.build().unwrap();
-        let solutions = xc.solve().unwrap();
+        let solutions = xc.solve().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(solutions.len(), 1);
         assert_eq!(solutions[0].len(), 2);
         assert_eq!(sol!(solutions, 0, 0), ["a"]);
@@ -616,9 +650,9 @@ mod test {
         builder.parse_option(["a"]).unwrap();
         builder.parse_option(["b"]).unwrap();
         builder.parse_option(["a", "b"]).unwrap();
-        builder.trace(false).unwrap();
+        builder.trace(true).unwrap();
         let xc = builder.build().unwrap();
-        let solutions = xc.solve().unwrap();
+        let solutions = xc.solve().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(solutions.len(), 2);
         assert_eq!(solutions[0].len(), 2);
         assert_eq!(sol!(solutions, 0, 0), ["a"]);
@@ -642,7 +676,7 @@ mod test {
         builder.parse_option(["d", "e", "g"]).unwrap();
         builder.trace(false).unwrap();
         let xc = builder.build().unwrap();
-        let solutions = xc.solve().unwrap();
+        let solutions = xc.solve().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(solutions.len(), 1);
         assert_eq!(solutions[0].len(), 3);
         assert_eq!(sol!(solutions, 0, 0), ["a", "d", "f"]);
@@ -663,34 +697,73 @@ mod test {
         builder.parse_option(["r", "y:B"]).unwrap();
         builder.trace(false).unwrap();
         let xcc = builder.build().unwrap();
-        let solutions = xcc.solve().unwrap();
+        let solutions = xcc.solve().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(solutions.len(), 1);
         assert_eq!(solutions[0].len(), 2);
         assert_eq!(sol!(solutions, 0, 0), ["q", "x:A"]);
         assert_eq!(sol!(solutions, 0, 1), ["p", "r", "x:A", "y"]);
     }
 
-    /// "Extreme" XC problem: Knuth 7.2.2.1-(82).
-    /// All _2^n - 1_ possible options on _n_ primary items.
+    /// The "extreme" XC problem of Knuth 7.2.2.1-(82): all 2^_n_ - 1
+    /// possible options on _n_ primary items. The tunable parameters
+    /// are _n_ and _r_, how often to report & sample the solutions
+    /// found so far. (Sampling lets us approximate checking uniqueness
+    /// of solutions without keeping most of them.) Knuth finds all
+    /// 1,382,958,545 solutions for _n_ = 15 "in just 432 gigamems"
+    /// with his dancing cells implementation. This code running in
+    /// release mode on the author's workstation (Intel i9-13900K)
+    /// finds them in about 3 hours; finding the 10,480,142,147 solutions
+    /// for _n_ = 16 takes about 24 hours. We keep _n_ set to a value
+    /// that runs in < 1 second (in release mode) for the test.
     #[test]
     fn extreme_xc() {
-        let n = 8;
-        let items = (0..n)
-            .map(|i| Item::<usize, usize>::Primary(i))
+        // Parameters.
+        const N: u8 = 10;
+        const R: usize = 1_000_000;
+
+        // Knuth §7.2.1.1
+        let items = (0..N)
+            .map(|i| Item::<u8, u8>::Primary(i.into()))
             .collect::<Vec<_>>();
         let options = gray_codes::VecSubsets::of(&items)
             .into_iter()
             .map(|x| x.into_iter().cloned().collect::<Vec<_>>())
             .collect::<Vec<_>>();
-        let xc = DancingCells::new(items.clone(), options, false).unwrap();
-        let solutions = xc.solve().unwrap();
-        for solution in solutions {
-            let mut solution = solution.into_iter().flatten().collect::<Vec<_>>();
-            solution.sort_by_key(|item| match item {
+
+        let xxc = DancingCells::new(items.clone(), options, false).unwrap();
+        let mut i = 0;
+        let mut uniq = HashSet::<Options<u8, u8>>::new();
+        for result in xxc.solve() {
+            let solution: Options<u8, u8> = result.unwrap();
+            let mut solution_items = solution.iter().flatten().cloned().collect::<Vec<_>>();
+            solution_items.sort_by_key(|item| match item {
                 Item::Primary(t) => *t,
                 Item::Secondary(_t, _c) => unreachable!("no secondary items"),
             });
-            assert_eq!(&solution, &items);
+            assert_eq!(&solution_items, &items);
+
+            i += 1;
+            if i % R == 0 {
+                assert!(uniq.insert(solution.clone()));
+                eprintln!(
+                    "* {i} solutions so far, like {{{}}}",
+                    solution
+                        .iter()
+                        .map(|s| format!(
+                            "[{}]",
+                            s.iter()
+                                .map(|i| i.to_string())
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+        }
+        assert!(i > 0);
+        if i > R {
+            eprintln!("* {i} solutions total.")
         }
     }
 }

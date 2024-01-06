@@ -9,6 +9,6 @@ fn main() -> Result<(), XccError<String, String>> {
     let mut builder = XccBuilder::new();
     builder.trace(true).unwrap();
     let xcc = builder.build()?;
-    let _solutions = xcc.solve()?;
+    let _solutions = xcc.solve().collect::<Result<Vec<_>, _>>().unwrap();
     Ok(())
 }
