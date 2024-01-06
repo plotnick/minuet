@@ -134,7 +134,7 @@ type ColorMap = HashMap<(usize, usize), usize>;
 type OptionItems = Vec<SparseIntegerSet<usize>>;
 type Solution = Vec<usize>;
 type Solutions = Vec<Solution>;
-type Trail = Vec<(usize, Vec<(usize, usize)>)>;
+type Trail = Vec<(usize, usize, Vec<(usize, usize)>)>;
 
 /// XCC solver à la Knuth §7.2.2.3.
 #[must_use]
@@ -163,6 +163,13 @@ pub struct DancingCells<T: Hash + Eq, C: Hash + Eq> {
 
     /// Whether or not to log status messages to standard error.
     trace: bool,
+}
+
+struct DanceState {
+    trail: Trail,
+    solution: Solution,
+    active_items: ActiveItems,
+    active_options: ActiveOptions,
 }
 
 impl<T, C> DancingCells<T, C>
@@ -260,23 +267,24 @@ where
     pub fn solve(&self) -> Result<Vec<Options<T, C>>, XccError<T, C>> {
         let n = self.items.len();
         let m = self.options.len();
-        let mut trail = Trail::new();
-        let mut solution = Solution::new();
+        let mut state = DanceState {
+            trail: Trail::new(),
+            solution: Solution::new(),
+            active_items: ActiveItems::new(0..n),
+            active_options: (0..n)
+                .map(|i| (0..m).filter(|&o| self.is_involved(o, i, 0)).collect())
+                .collect::<ActiveOptions>(),
+        };
         let mut solutions = Solutions::new();
-        let mut items = ActiveItems::new(0..n);
-        let mut options = (0..n)
-            .map(|i| (0..m).filter(|&o| self.is_involved(o, i, 0)).collect())
-            .collect::<ActiveOptions>();
 
         // Knuth 7.2.2.1-(9), 7.2.2.1X,C, 7.2.2.3C.
         loop {
-            if let Some((item, option)) = self.choose(&items, &options) {
-                self.cover(item, option, &mut trail, &mut items, &mut options)?;
-                solution.push(option);
-                if items.is_empty() {
-                    solutions.push(solution.clone());
+            if let Some((item, option)) = self.choose(&state) {
+                self.cover(item, option, &mut state)?;
+                if state.active_items.is_empty() {
+                    solutions.push(state.solution.clone());
                 }
-            } else if !self.backtrack(&mut trail, &mut solution, &mut items, &mut options) {
+            } else if !self.backtrack(&mut state) {
                 break;
             }
         }
@@ -329,8 +337,11 @@ where
     /// select the first active option for that item.
     fn choose(
         &self,
-        active_items: &ActiveItems,
-        active_options: &ActiveOptions,
+        DanceState {
+            active_items,
+            active_options,
+            ..
+        }: &DanceState,
     ) -> Option<(usize, usize)> {
         active_items
             .iter()
@@ -355,9 +366,13 @@ where
         &self,
         item: usize,
         option: usize,
-        trail: &mut Trail,
-        active_items: &mut ActiveItems,
-        active_options: &mut ActiveOptions,
+        DanceState {
+            trail,
+            solution,
+            active_items,
+            active_options,
+            ..
+        }: &mut DanceState,
     ) -> Result<(), XccError<T, C>> {
         if self.trace {
             eprintln!(
@@ -381,7 +396,7 @@ where
                 self.format_item(item)
             );
         } else {
-            self.trail(trail, active_items, active_options)?;
+            self.trail(trail, solution, active_items, active_options)?;
         }
 
         for &sibling in self.involved(option) {
@@ -390,7 +405,7 @@ where
         }
 
         self.trace_state("after covering", active_items, active_options);
-        Ok(())
+        Ok(solution.push(option))
     }
 
     /// Deactivate `item` and all active options that involve it.
@@ -411,19 +426,21 @@ where
     fn trail(
         &self,
         trail: &mut Trail,
+        solution: &Solution,
         active_items: &ActiveItems,
         active_options: &ActiveOptions,
     ) -> Result<(), XccError<T, C>> {
         if trail.len() >= MAX_TRAIL_LEN {
             Err(XccError::TrailOverflow(MAX_TRAIL_LEN))
         } else {
+            let s = solution.len();
             let n = active_items.len();
             assert!(n > 0, "no active items to trail");
             let options = active_items
                 .iter()
                 .map(|&i| (i, active_options[i].len()))
                 .collect::<Vec<(usize, usize)>>();
-            Ok(trail.push((n, options)))
+            Ok(trail.push((s, n, options)))
         }
     }
 
@@ -431,23 +448,21 @@ where
     /// or `false` if the trail is empty.
     fn backtrack(
         &self,
-        trail: &mut Trail,
-        solution: &mut Solution,
-        active_items: &mut ActiveItems,
-        active_options: &mut ActiveOptions,
+        DanceState {
+            trail,
+            solution,
+            active_items,
+            active_options,
+        }: &mut DanceState,
     ) -> bool {
-        if let Some((n, options)) = trail.pop() {
+        if let Some((s, n, options)) = trail.pop() {
+            solution.truncate(s);
             assert!(n > 0, "no active items on trail");
             active_items.restore(n);
             for &(i, m) in options.iter() {
                 assert!(m > 0, "no active options for {}", self.format_item(i));
                 active_options[i].restore(m);
             }
-            solution.retain(|&o| {
-                !self.involved(o)
-                    .into_iter()
-                    .all(|i| active_items.contains(i))
-            });
             self.trace_state("after backtracking", active_items, active_options);
             true
         } else {
