@@ -1,6 +1,7 @@
 mod builder;
 mod solver;
 mod domain;
+mod syntax;
 
 use builder::XccBuilder;
 use solver::XccError;
