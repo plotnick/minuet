@@ -35,12 +35,29 @@ fn symbol() {
     assert_eq!(sym![a], Symbol::new(String::from("a")));
 }
 
+// TODO: enum Constant { Name(Symbol), Integer(i64), String(String), ... }
+pub type Constant = Symbol;
+
 /// Interpreted element that represents either itself (a constant)
 /// or something else (a variable).
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Term {
     Constant(Symbol),
     Variable(Symbol),
+}
+
+impl Term {
+    pub fn is_constant(&self) -> bool {
+        match self {
+            Self::Constant(_) => true,
+            Self::Variable(_) => false,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn is_variable(&self) -> bool {
+        !self.is_constant()
+    }
 }
 
 impl fmt::Display for Term {
@@ -78,6 +95,15 @@ pub struct Atom {
     pub arguments: Vec<Term>,
 }
 
+impl Atom {
+    pub fn new(predicate: Symbol, arguments: Vec<Term>) -> Self {
+        Self {
+            predicate,
+            arguments,
+        }
+    }
+}
+
 impl fmt::Display for Atom {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.arguments.is_empty() {
@@ -92,15 +118,6 @@ impl fmt::Display for Atom {
                     .collect::<Vec<_>>()
                     .join(", ")
             ))
-        }
-    }
-}
-
-impl Atom {
-    pub fn new(predicate: Symbol, arguments: Vec<Term>) -> Self {
-        Self {
-            predicate,
-            arguments,
         }
     }
 }
@@ -127,6 +144,27 @@ fn atom() {
 pub enum Literal {
     Positive(Atom),
     Negative(Atom),
+}
+
+#[allow(dead_code)]
+impl Literal {
+    pub fn negate(&self) -> Self {
+        match self {
+            Self::Positive(atom) => Self::Negative(atom.clone()),
+            Self::Negative(atom) => Self::Positive(atom.clone()),
+        }
+    }
+
+    pub fn is_positive(&self) -> bool {
+        match self {
+            Self::Positive(_) => true,
+            Self::Negative(_) => false,
+        }
+    }
+
+    pub fn is_negative(&self) -> bool {
+        !self.is_positive()
+    }
 }
 
 impl fmt::Display for Literal {
@@ -167,7 +205,6 @@ impl Rule {
     }
 }
 
-#[macro_export]
 macro_rules! rule {
     // TODO: Is there a way to accumulate forward and avoid this reverse?
     [@head [] -> [$($head:tt)*]] => {{

@@ -1,14 +1,23 @@
 //! Exact covering with colors (XCC) using "dancing cells"
 //! (Knuth §§7.2.2.1,3, Christmas Lectures 2018,23).
 //!
-//! A finite set of *items* is to be exactly covered by a finite
-//! subset of *options* (not to be confused with Rust's `Option`).
-//! *Primary items* are to be covered exactly once; *secondary items*
-//! may be covered more than once, but must match in *color* across
-//! options. Any CSP or SAT problem may be formulated using XCC;
-//! for a CSP, the variables are the primary items, and the domains
-//! are the options. Domains are represented using sparse sets with
-//! reversible memory for fast backtracking.
+//! A finite set of *items* is to be exactly covered by a finite subset of
+//! *options* (not to be confused with Rust's `Option`). *Primary items*
+//! are to be covered exactly once; *secondary items* may be covered more
+//! than once, but must match in *color* across options. A solver searches
+//! for exact covers without enumerating all possible subsets.
+//!
+//! Any CSP or SAT problem may be formulated using XCC; e.g., for a CSP,
+//! the primary items are the variables, and the options are the domains.
+//! We can also use it for finding models of logic programs, where the
+//! primary items are the rules, secondary items are (ground) atomic
+//! formulas, and the options are ways of satisfying the rules with various
+//! interpretations (sets of atomic formulas taken as true).
+//!
+//! During a search, active items and options are represented using
+//! sparse sets with reversible memory for fast backtracking; see the
+//! `crate::domain` module for details. The memory required for a search
+//! should be constant once the problem is set up.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -131,6 +140,8 @@ where
     SecondaryItemInconsistentlyColored(Item<T, C>, Items<T, C>),
     #[error("Trail exceeded maximum size of {0}")]
     TrailOverflow(usize),
+    #[error("Item {0} was not declared")]
+    UndeclaredItem(Item<T, C>),
 }
 
 /// Maximum length of the backtracking trail through the search space.
@@ -228,8 +239,13 @@ where
         let mut option_items = OptionItems::new();
         let mut colors = ColorMap::new();
         let mut uniq_items = HashSet::<usize>::new();
-        let mut uniq_colors = HashMap::<usize, usize>::new();
         for (o, option) in options.iter().enumerate() {
+            for i in option.iter() {
+                if !item_ids.contains_key(&i) {
+                    return Err(XccError::UndeclaredItem(i.clone()));
+                }
+            }
+
             uniq_items.clear();
             let ids = SparseIntegerSet::new(option.iter().map(|i| item_ids[i]));
             for &i in ids.iter() {
@@ -242,19 +258,20 @@ where
             }
             option_items.push(ids);
 
-            uniq_colors.clear();
             for item in option {
                 if let Some(color) = item.color() {
                     let i = item_ids[item];
                     let n = color_ids.len() + 1; // 0 = unique color
                     let c = *color_ids.entry(&color).or_insert(n);
-                    if uniq_colors.insert(i, c).is_none() {
-                        colors.insert((o, i), c);
+                    if let Some(&d) = colors.get(&(o, i)) {
+                        if d != c {
+                            return Err(XccError::SecondaryItemInconsistentlyColored(
+                                items[i].clone(),
+                                option.clone(),
+                            ));
+                        }
                     } else {
-                        return Err(XccError::SecondaryItemInconsistentlyColored(
-                            items[i].clone(),
-                            option.clone(),
-                        ));
+                        colors.insert((o, i), c);
                     }
                 }
             }
@@ -292,7 +309,9 @@ where
         loop {
             if let Some((item, option)) = self.choose(state) {
                 self.cover(item, option, state)?;
-                if state.active_items.is_empty() {
+                if state.active_items.is_empty()
+                    || state.active_items.iter().all(|&i| self.is_secondary(i))
+                {
                     return Ok(self.decode_solution(&state.solution));
                 }
             } else if !self.backtrack(state) {
@@ -396,7 +415,7 @@ where
         }
 
         for &sibling in self.involved(option) {
-            let color = self.color(sibling, option);
+            let color = self.color(option, sibling);
             for &other in state.active_items.iter() {
                 state.active_options[other]
                     .delete_if(|&option| self.is_involved(option, sibling, color));
@@ -449,7 +468,6 @@ where
             solution.truncate(s);
             active_items.restore(n);
             for &(i, m) in options.iter() {
-                assert!(m > 0, "no active options for {}", self.format_item(i));
                 active_options[i].restore(m);
             }
             self.trace_state("after backtracking", active_items, active_options);
