@@ -1,12 +1,14 @@
-mod builder;
-mod domain;
-mod solver;
-
 #[macro_use]
 mod syntax;
+#[macro_use]
+mod tracer;
+
+mod builder;
+mod compiler;
+mod domain;
 mod formula;
 mod semantics;
-mod compiler;
+mod solver;
 
 use builder::XccBuilder;
 use solver::XccError;

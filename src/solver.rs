@@ -27,6 +27,7 @@ use std::string::ToString;
 use thiserror::Error;
 
 use crate::domain::{Domain, SparseIntegerSet};
+use crate::tracer::Trace;
 
 /// A primary or secondary item. The `Hash` requirement is so that the
 /// solver can build an item → id map and operate on integers internally
@@ -188,7 +189,7 @@ pub struct DancingCells<T: Hash + Eq, C: Hash + Eq> {
     second: usize,
 
     /// Whether or not to log status messages to standard error.
-    trace: bool,
+    trace: Trace,
 }
 
 impl<T, C> DancingCells<T, C>
@@ -200,7 +201,7 @@ where
     pub fn new(
         mut items: Items<T, C>,
         options: Options<T, C>,
-        trace: bool,
+        trace: Trace,
     ) -> Result<Self, XccError<T, C>> {
         // Basic problem checks. The solver will behave badly if any
         // of these assumptions are violated.
@@ -395,14 +396,12 @@ where
         option: usize,
         state: &mut DanceState,
     ) -> Result<(), XccError<T, C>> {
-        if self.trace {
-            eprintln!(
-                "** Covering item {} with option {}",
-                self.format_item(item),
-                self.format_option(option),
-            );
-        }
-
+        trace!(
+            self.trace,
+            "** Covering item {} with option {}",
+            self.format_item(item),
+            self.format_option(option),
+        );
         assert!(self.is_primary(item), "can't choose a secondary item");
         assert!(
             state.active_options[item].delete(&option),
@@ -479,46 +478,44 @@ where
 
     /// If tracing is active, write a description of the active items & options to stderr.
     fn trace_state(&self, when: &'static str, items: &ActiveItems, options: &ActiveOptions) {
-        if self.trace {
-            eprintln!(
-                "** Active items {when}: {{{}}}; options {{{}}}",
-                items
-                    .iter()
-                    .map(|&i| self.format_item(i))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                options
-                    .iter()
-                    .enumerate()
-                    .map(|(i, options)| {
-                        format!(
-                            "{} => {{{}}}",
-                            self.format_item(i),
-                            options
-                                .iter()
-                                .map(|&o| self.format_option(o))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        };
+        trace!(
+            self.trace,
+            "** Active items {when}: {{{}}}; options {{{}}}",
+            items
+                .iter()
+                .map(|&i| self.format_item(i))
+                .collect::<Vec<_>>()
+                .join(", "),
+            options
+                .iter()
+                .enumerate()
+                .map(|(i, options)| {
+                    format!(
+                        "{} => {{{}}}",
+                        self.format_item(i),
+                        options
+                            .iter()
+                            .map(|&o| self.format_option(o))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
     }
 
     /// If tracing is active, write a solution to stderr.
     pub fn trace_solution<'a>(&self, solution: &'a Solution) {
-        if self.trace {
-            eprintln!(
-                "* Got a solution: {}",
-                solution
-                    .iter()
-                    .map(|&o| self.format_option(o))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-        }
+        trace!(
+            self.trace,
+            "* Got a solution: {}",
+            solution
+                .iter()
+                .map(|&o| self.format_option(o))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
     }
 
     fn format_item(&self, item: usize) -> String {
@@ -668,7 +665,7 @@ mod test {
         builder.parse_option(["a"]).unwrap();
         builder.parse_option(["b"]).unwrap();
         builder.parse_option(["a", "b"]).unwrap();
-        builder.trace(true).unwrap();
+        builder.trace(false).unwrap();
         let xc = builder.build().unwrap();
         let solutions = xc.solve().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(solutions.len(), 2);

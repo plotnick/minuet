@@ -10,6 +10,7 @@ use crate::formula::*;
 use crate::semantics::*;
 use crate::solver::*;
 use crate::syntax::*;
+use crate::tracer::*;
 
 /// An interpretation (a set of atoms which are "true") that satisfy a program.
 pub type AnswerSet = Interpretation;
@@ -34,11 +35,13 @@ pub struct XccCompiler {
 }
 
 impl XccCompiler {
-    pub fn new(rules: impl IntoIterator<Item = Rule>) -> Result<Self, XccError<Atom, bool>> {
+    pub fn new(
+        rules: impl IntoIterator<Item = Rule>,
+        trace: Trace,
+    ) -> Result<Self, XccError<Atom, bool>> {
         let program = Program::new(rules).normalize().ground().complete();
-        eprintln!("Completed program:\n{program}");
-        let (items, options) = Self::compile(&program);
-        let solver = DancingCells::new(items, options, true)?;
+        let (items, options) = Self::compile(&program, trace);
+        let solver = DancingCells::new(items, options, trace)?;
         Ok(Self { program, solver })
     }
 
@@ -56,7 +59,12 @@ impl XccCompiler {
     /// As Knuth notes, this is not a particularly efficient encoding (because
     /// it only gets one primary item per option), and we should try to improve
     /// on it (like looking for jointly (un)satisfying local models).
-    fn compile(program: &CompleteProgram) -> (Items<Atom, bool>, Options<Atom, bool>) {
+    fn compile(
+        program: &CompleteProgram,
+        trace: Trace,
+    ) -> (Items<Atom, bool>, Options<Atom, bool>) {
+        trace!(trace, "Compiling complete program:\n{}", program);
+
         let atoms = program.uniq_atoms();
         let aux = (0..program.len())
             .map(|i| genaux("rule", i, &atoms))
@@ -116,25 +124,29 @@ impl XccCompiler {
             .filter(|option| uniq.insert(option.clone())) // Oh, Rust!
             .collect::<Options<Atom, bool>>();
 
-        eprintln!(
-            "Items: {}",
+        trace!(
+            trace,
+            "XCC Items: {{{}}}",
             items
                 .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
                 .join(", ")
         );
-        eprintln!(
-            "Options: {{\n {}\n}}\n",
+        trace!(
+            trace,
+            "XCC Options: {{\n  {}\n}}\n",
             options
                 .iter()
-                .map(|o| o
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", "))
+                .map(|o| format!(
+                    "{{{}}}",
+                    o.iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
                 .collect::<Vec<_>>()
-                .join(",\n ")
+                .join(",\n  ")
         );
         (items, options)
     }
@@ -240,13 +252,16 @@ mod test {
 
     #[test]
     fn trivial_0() {
-        assert!(matches!(XccCompiler::new([]), Err(XccError::NoOptions)));
+        assert!(matches!(
+            XccCompiler::new([], false),
+            Err(XccError::NoOptions)
+        ));
     }
 
     #[test]
     fn trivial_1() {
         let rules = [rule![p]];
-        let xcc = XccCompiler::new(rules).unwrap();
+        let xcc = XccCompiler::new(rules, false).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{ atom![p] }]);
     }
@@ -254,7 +269,7 @@ mod test {
     #[test]
     fn trivial_2() {
         let rules = [rule![p if q], rule![q]];
-        let xcc = XccCompiler::new(rules).unwrap();
+        let xcc = XccCompiler::new(rules, false).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{atom![p], atom![q]}]);
     }
@@ -262,7 +277,7 @@ mod test {
     #[test]
     fn circular_1() {
         let rules = [rule![p if p]];
-        let xcc = XccCompiler::new(rules).unwrap();
+        let xcc = XccCompiler::new(rules, false).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{}]);
     }
@@ -271,7 +286,7 @@ mod test {
     #[test]
     fn asp_4_3() {
         let rules = [rule![p if q and r], rule![q if p], rule![r if p]];
-        let xcc = XccCompiler::new(rules).unwrap();
+        let xcc = XccCompiler::new(rules, false).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{}]);
     }
@@ -280,7 +295,7 @@ mod test {
     #[test]
     fn asp_4_13() {
         let rules = [rule![p or q], rule![r if p], rule![s if q]];
-        let xcc = XccCompiler::new(rules).unwrap();
+        let xcc = XccCompiler::new(rules, false).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(
             answers[..],
@@ -295,7 +310,7 @@ mod test {
     #[test]
     fn felicitous_3() {
         let rules = [rule![a], rule![b if a], rule![d if b and c]];
-        let xcc = XccCompiler::new(rules).unwrap();
+        let xcc = XccCompiler::new(rules, false).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{atom![a], atom![b]}]);
     }
@@ -303,7 +318,7 @@ mod test {
     #[test]
     fn unsatisfiable() {
         let rules = [rule![p if q], rule![q], rule![if p]];
-        let xcc = XccCompiler::new(rules).unwrap();
+        let xcc = XccCompiler::new(rules, false).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], []);
     }
@@ -311,7 +326,7 @@ mod test {
     #[test]
     fn alviano_dodaro_example_1() {
         let rules = [rule![a or b or c], rule![b if a], rule![c if not a]];
-        let xcc = XccCompiler::new(rules).unwrap();
+        let xcc = XccCompiler::new(rules, false).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{ atom![c] }]);
     }
