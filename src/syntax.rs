@@ -205,6 +205,31 @@ impl Rule {
     }
 }
 
+impl fmt::Display for Rule {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let head = || -> String {
+            self.head
+                .iter()
+                .map(|h| h.to_string())
+                .collect::<Vec<_>>()
+                .join(" or ")
+        };
+        let body = || -> String {
+            self.body
+                .iter()
+                .map(|b| b.to_string())
+                .collect::<Vec<_>>()
+                .join(" and ")
+        };
+        match (self.head.is_empty(), self.body.is_empty()) {
+            (true, true) => Ok(()),
+            (true, false) => f.write_fmt(format_args!("if {}", body())),
+            (false, true) => f.write_fmt(format_args!("{}", head())),
+            (false, false) => f.write_fmt(format_args!("{} if {}", head(), body())),
+        }
+    }
+}
+
 macro_rules! rule {
     // TODO: Is there a way to accumulate forward and avoid this reverse?
     [@head [] -> [$($head:tt)*]] => {{

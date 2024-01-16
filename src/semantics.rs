@@ -1,15 +1,15 @@
 //! Meaning-preserving manipulation of logic programs: ground all variables,
-//! remove all disjunctions, and "complete" all rules by turning them from
-//! implications into equivalences. (See Dodaro's dissertation, Lifschitz
-//! "ASP", etc.) These are all pre-processing steps for compilation into
-//! a combinatorial search problem.
+//! remove all disjunctions, and "complete" all rules by transforming them
+//! from implications into equivalences. (See Dodaro's dissertation, Lifschitz
+//! "ASP", etc.) These are all pre-processing steps prior to compilation into
+//! a combinatorial search problem and resolution into stable models.
 
 #![allow(dead_code)]
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use crate::formula::*;
+use crate::formula::{Formula, Interpretation};
 use crate::syntax::*;
 
 /// A program is a collection of rules that we'll process in strict order,
@@ -42,6 +42,16 @@ impl Program {
 
     pub fn normalize(self) -> NormalProgram {
         NormalProgram::new(self.iter().flat_map(NormalRule::normalize))
+    }
+}
+
+impl fmt::Display for Program {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for c in self.iter() {
+            c.fmt(f)?;
+            f.write_str("\n")?;
+        }
+        Ok(())
     }
 }
 
@@ -115,6 +125,10 @@ impl Formula for NormalRule {
     fn eval(&self, interp: &Interpretation) -> bool {
         self.head.iter().any(|h| h.eval(interp)) && self.body.iter().all(|b| b.eval(interp))
     }
+
+    fn reduce(self, _interp: &Interpretation) -> Self {
+        todo!("reduce normal rule")
+    }
 }
 
 impl fmt::Display for NormalRule {
@@ -163,10 +177,13 @@ impl NormalProgram {
     }
 
     pub fn ground(self) -> GroundProgram {
-        let universe = self.iter().flat_map(|rule| rule.constants()).collect();
+        let _universe = self
+            .iter()
+            .flat_map(|rule| rule.constants())
+            .collect::<Universe>();
         let program = self;
         // TODO: naïve grounding
-        GroundProgram::new(program, universe)
+        GroundProgram::new(program)
     }
 }
 
@@ -190,6 +207,10 @@ impl Formula for NormalProgram {
     fn eval(&self, interp: &Interpretation) -> bool {
         self.iter().all(|r| r.eval(interp))
     }
+
+    fn reduce(self, interp: &Interpretation) -> Self {
+        Self(self.into_iter().map(|r| r.reduce(interp)).collect())
+    }
 }
 
 impl fmt::Display for NormalProgram {
@@ -211,7 +232,7 @@ pub type AuxAtoms = Vec<Atom>;
 /// Fresh, unique atoms to associate with each rule.
 // TODO: optionally use random numbers to avoid collisions.
 pub fn genaux(aux: &str, id: usize, atoms: &HashSet<Atom>) -> Atom {
-    assert!(!aux.is_empty());
+    assert!(!aux.is_empty(), "can't make an aux atom without a prefix");
     for i in 0..100 {
         let x = aux[aux.len() - 1..].repeat(i);
         let a = Atom::new(Symbol::new(format!("{aux}{x}_{id}")), vec![]);
@@ -219,36 +240,29 @@ pub fn genaux(aux: &str, id: usize, atoms: &HashSet<Atom>) -> Atom {
             return a;
         }
     }
-    panic!("can't make a(n) {aux} atom for this program");
+    panic!("can't make an aux atom for this program");
 }
 
 /// A ground program contains no variables.
 #[derive(Clone, Debug)]
-pub struct GroundProgram {
-    program: NormalProgram,
-    universe: Universe,
-}
+pub struct GroundProgram(NormalProgram);
 
 impl GroundProgram {
-    fn new(program: NormalProgram, universe: Universe) -> Self {
-        assert!(program.iter().all(|r| r.is_ground()));
-        Self { program, universe }
+    fn new(program: NormalProgram) -> Self {
+        assert!(program.iter().all(|r| r.is_ground()), "non-ground program");
+        Self(program)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &NormalRule> {
-        self.program.iter()
+        self.0.iter()
     }
 
     pub fn into_iter(self) -> impl Iterator<Item = NormalRule> {
-        self.program.into_iter()
+        self.0.into_iter()
     }
 
     pub fn len(&self) -> usize {
-        self.program.len()
-    }
-
-    pub fn universe(&self) -> &Universe {
-        &self.universe
+        self.0.len()
     }
 
     /// Program completion, also called Clark's completion. See Lifschitz, "ASP" §5.9.
@@ -271,7 +285,7 @@ impl GroundProgram {
         let mut constraints = Vec::new();
         for rule in self.iter() {
             if let Some(head) = &rule.head {
-                if atoms.remove(&head) {
+                if atoms.remove(head) {
                     constraints.push(Constraint::new(
                         Some(head.clone()),
                         heads
@@ -279,7 +293,7 @@ impl GroundProgram {
                             .map(|rules| {
                                 rules
                                     .iter()
-                                    .map(|&i| self.program.0[i].body.clone())
+                                    .map(|&i| self.0 .0[i].body.clone())
                                     .collect::<Vec<_>>()
                             })
                             .unwrap_or_default(),
@@ -290,17 +304,17 @@ impl GroundProgram {
             }
         }
 
-        CompleteProgram::new(constraints, self.universe)
+        CompleteProgram::new(constraints)
     }
 }
 
 impl Formula for GroundProgram {
     fn atoms(&self) -> Vec<Atom> {
-        self.program.atoms()
+        self.0.atoms()
     }
 
     fn constants(&self) -> Vec<Constant> {
-        self.program.constants()
+        self.0.constants()
     }
 
     fn is_definite(&self) -> bool {
@@ -312,7 +326,11 @@ impl Formula for GroundProgram {
     }
 
     fn eval(&self, interp: &Interpretation) -> bool {
-        self.program.eval(interp)
+        self.0.eval(interp)
+    }
+
+    fn reduce(self, interp: &Interpretation) -> Self {
+        Self(self.0.reduce(interp))
     }
 }
 
@@ -378,6 +396,25 @@ impl Formula for Constraint {
         self.head.as_ref().is_some_and(|head| interp.contains(head))
             == self.body.iter().any(|b| b.iter().all(|c| c.eval(interp)))
     }
+
+    /// Delete each disjunct that has a negative literal `not b` with `b ∈ I`,
+    /// and all negative literals in the conjuncts of the remaining disjuncts.
+    fn reduce(self, interp: &Interpretation) -> Self {
+        Self {
+            head: self.head,
+            body: self
+                .body
+                .into_iter()
+                .filter_map(|b| {
+                    if b.iter().any(|c| c.is_negative() && !c.eval(interp)) {
+                        None
+                    } else {
+                        Some(b.into_iter().filter(|c| c.is_positive()).collect())
+                    }
+                })
+                .collect(),
+        }
+    }
 }
 
 impl fmt::Display for Constraint {
@@ -405,33 +442,23 @@ impl fmt::Display for Constraint {
 }
 
 #[derive(Clone, Debug)]
-pub struct CompleteProgram {
-    program: Vec<Constraint>,
-    universe: Universe,
-}
+pub struct CompleteProgram(Vec<Constraint>);
 
 impl CompleteProgram {
-    fn new(program: impl IntoIterator<Item = Constraint>, universe: Universe) -> Self {
-        Self {
-            program: program.into_iter().collect::<Vec<_>>(),
-            universe,
-        }
+    fn new(program: impl IntoIterator<Item = Constraint>) -> Self {
+        Self(program.into_iter().collect::<Vec<_>>())
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Constraint> {
-        self.program.iter()
+        self.0.iter()
     }
 
     pub fn into_iter(self) -> impl Iterator<Item = Constraint> {
-        self.program.into_iter()
+        self.0.into_iter()
     }
 
     pub fn len(&self) -> usize {
-        self.program.len()
-    }
-
-    pub fn universe(&self) -> &Universe {
-        &self.universe
+        self.0.len()
     }
 }
 
@@ -454,6 +481,10 @@ impl Formula for CompleteProgram {
 
     fn eval(&self, interp: &Interpretation) -> bool {
         self.iter().all(|c| c.eval(interp))
+    }
+
+    fn reduce(self, interp: &Interpretation) -> Self {
+        Self(self.into_iter().map(|r| r.reduce(interp)).collect())
     }
 }
 
@@ -486,12 +517,20 @@ mod test {
                 vec![$(rule![if $($body)*].body),+]
             )
         }};
-        [$head:ident$(($($arg:tt),*))? iff $(($($body:tt)*))or+] => {{
+        [$head:ident$(($($arg:tt),*))? iff $(($($body:tt)*))or*] => {{
             Constraint::new(
-                Some(atom![$head$(($($arg:tt),*))?]),
-                vec![$(rule![if $($body)*].body),+]
+                Some(atom![$head$(($($arg),*))?]),
+                vec![$(rule![if $($body)*].body),*]
             )
         }}
+    }
+
+    macro_rules! interp {
+        {$($head:ident$(($($arg:tt),*))?),*} => {
+            [$(atom![$head$(($($arg),*))?]),*]
+                .into_iter()
+                .collect::<Interpretation>()
+        }
     }
 
     /// Grounding requires us to collect all the constants in a rule.
@@ -643,5 +682,67 @@ mod test {
                 constraint![c iff (not a and not b) or (not a)],
             ]
         );
+    }
+
+    /// Lifschitz, "ASP", §5.2.
+    #[test]
+    fn reduce_asp_5_2() {
+        // Rules (5.1)-(5.4).
+        let rules = [rule![p], rule![q], rule![r if p and not s], rule![s if q]];
+        let program = Program::new(rules).normalize().ground().complete();
+        assert_eq!(
+            program.iter().cloned().collect::<Vec<_>>(),
+            [
+                constraint![p iff ()],
+                constraint![q iff ()],
+                constraint![r iff (p and not s)],
+                constraint![s iff (q)],
+            ]
+        );
+
+        // Reduct (5.10).
+        let interp = interp! {p, q, s};
+        let reduct = program.clone().reduce(&interp);
+        assert_eq!(
+            reduct.into_iter().collect::<Vec<_>>(),
+            [
+                constraint![p iff ()],
+                constraint![q iff ()],
+                constraint![r iff],
+                constraint![s iff (q)],
+            ]
+        );
+        assert!(program.eval(&interp));
+
+        // Reduct (5.11).
+        let interp = interp! {p, q};
+        let reduct = program.clone().reduce(&interp);
+        assert_eq!(
+            reduct.iter().cloned().collect::<Vec<_>>(),
+            [
+                constraint![p iff ()],
+                constraint![q iff ()],
+                constraint![r iff (p)],
+                constraint![s iff (q)],
+            ]
+        );
+        assert!(!reduct.eval(&interp));
+    }
+
+    #[test]
+    fn reduce_alviano_dodaro_example_1() {
+        let rules = [rule![a or b or c], rule![b if a], rule![c if not a]];
+        let program = Program::new(rules).normalize().ground().complete();
+        let interp = interp! {c};
+        let reduct = program.clone().reduce(&interp);
+        assert_eq!(
+            reduct.into_iter().collect::<Vec<_>>(),
+            [
+                constraint![a iff],
+                constraint![b iff (a)],
+                constraint![c iff () or ()],
+            ]
+        );
+        assert!(program.eval(&interp));
     }
 }

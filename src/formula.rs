@@ -25,6 +25,7 @@ pub trait Formula {
     fn is_definite(&self) -> bool;
     fn is_ground(&self) -> bool;
     fn eval(&self, interp: &Interpretation) -> bool;
+    fn reduce(self, interp: &Interpretation) -> Self;
     fn uniq_atoms(&self) -> HashSet<Atom> {
         self.atoms().into_iter().collect()
     }
@@ -58,6 +59,10 @@ impl Formula for Atom {
     fn eval(&self, interp: &Interpretation) -> bool {
         interp.contains(self)
     }
+
+    fn reduce(self, _interp: &Interpretation) -> Self {
+        self
+    }
 }
 
 impl Formula for Literal {
@@ -89,6 +94,10 @@ impl Formula for Literal {
             Self::Negative(atom) => !interp.contains(atom),
         }
     }
+
+    fn reduce(self, _interp: &Interpretation) -> Self {
+        self
+    }
 }
 
 impl Formula for Rule {
@@ -118,6 +127,10 @@ impl Formula for Rule {
 
     fn eval(&self, interp: &Interpretation) -> bool {
         self.head.iter().any(|h| h.eval(interp)) && self.body.iter().all(|b| b.eval(interp))
+    }
+
+    fn reduce(self, _interp: &Interpretation) -> Self {
+        todo!("reduce rule")
     }
 }
 
