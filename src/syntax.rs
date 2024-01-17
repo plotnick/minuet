@@ -5,7 +5,7 @@
 use std::fmt;
 
 /// Uninterpreted element that names a constant, variable, or predicate.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Symbol(String);
 
 impl Symbol {
@@ -40,7 +40,7 @@ pub type Constant = Symbol;
 
 /// Interpreted element that represents either itself (a constant)
 /// or something else (a variable).
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Term {
     Constant(Constant),
     Variable(Symbol),
@@ -89,7 +89,7 @@ fn term() {
 
 /// An "atomic formula" is a predicate (_n_-ary relation) applied to
 /// a tuple of terms. If _n_ = 0, we may elide the argument tuple.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Atom {
     pub predicate: Symbol,
     pub arguments: Vec<Term>,
@@ -148,6 +148,13 @@ pub enum Literal {
 
 #[allow(dead_code)]
 impl Literal {
+    pub fn atom(&self) -> &Atom {
+        match self {
+            Self::Positive(atom) => atom,
+            Self::Negative(atom) => atom,
+        }
+    }
+
     pub fn negate(&self) -> Self {
         match self {
             Self::Positive(atom) => Self::Negative(atom.clone()),

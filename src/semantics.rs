@@ -6,10 +6,10 @@
 
 #![allow(dead_code)]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use crate::formula::{Bindings, Formula, Interpretation};
+use crate::formula::{Bindings, Formula, Interpretation, Names, Universe};
 use crate::syntax::*;
 
 /// A program is a collection of rules that we'll process in strict order,
@@ -100,20 +100,31 @@ impl NormalRule {
 }
 
 impl Formula for NormalRule {
-    fn atoms(&self) -> Vec<Atom> {
-        self.head
-            .iter()
-            .flat_map(|h| h.atoms())
-            .chain(self.body.iter().flat_map(|b| b.atoms()))
-            .collect()
+    fn atoms(&self, interp: &mut Interpretation) {
+        for h in &self.head {
+            h.atoms(interp);
+        }
+        for b in &self.body {
+            b.atoms(interp);
+        }
     }
 
-    fn constants(&self) -> Vec<Constant> {
-        self.head
-            .iter()
-            .flat_map(|h| h.constants())
-            .chain(self.body.iter().flat_map(|b| b.constants()))
-            .collect()
+    fn constants(&self, universe: &mut Universe) {
+        for h in &self.head {
+            h.constants(universe);
+        }
+        for b in &self.body {
+            b.constants(universe);
+        }
+    }
+
+    fn variables(&self, names: &mut Names) {
+        for h in &self.head {
+            h.variables(names);
+        }
+        for b in &self.body {
+            b.variables(names);
+        }
     }
 
     fn is_definite(&self) -> bool {
@@ -188,19 +199,13 @@ impl NormalProgram {
     /// Ground all variables in all possible ways.
     // TODO: less naïve grounding.
     pub fn ground(self) -> GroundProgram {
-        let mut constants = self
-            .iter()
-            .flat_map(|rule| rule.constants())
-            .collect::<Vec<Constant>>();
-        constants.sort_unstable_by(|a, b| a.name().cmp(b.name()));
-        constants.dedup();
+        let mut constants = Universe::new();
+        self.constants(&mut constants);
+        let constants = constants.into_iter().collect::<Vec<Constant>>();
 
-        let mut variables = self
-            .iter()
-            .flat_map(|rule| rule.variables())
-            .collect::<Vec<Symbol>>();
-        variables.sort_unstable_by(|a, b| a.name().cmp(b.name()));
-        variables.dedup();
+        let mut variables = Names::new();
+        self.variables(&mut variables);
+        let variables = variables.into_iter().collect::<Vec<Symbol>>();
 
         let (mut rules, var_rules): (Vec<_>, Vec<_>) =
             self.into_iter().partition(|r| r.is_ground());
@@ -236,12 +241,22 @@ impl NormalProgram {
 }
 
 impl Formula for NormalProgram {
-    fn atoms(&self) -> Vec<Atom> {
-        self.iter().flat_map(|r| r.atoms()).collect()
+    fn atoms(&self, interp: &mut Interpretation) {
+        for r in self.iter() {
+            r.atoms(interp);
+        }
     }
 
-    fn constants(&self) -> Vec<Constant> {
-        self.iter().flat_map(|r| r.constants()).collect()
+    fn constants(&self, universe: &mut Universe) {
+        for r in self.iter() {
+            r.constants(universe);
+        }
+    }
+
+    fn variables(&self, names: &mut Names) {
+        for r in self.iter() {
+            r.variables(names);
+        }
     }
 
     fn is_definite(&self) -> bool {
@@ -280,7 +295,7 @@ pub type AuxAtoms = Vec<Atom>;
 
 /// Fresh, unique atoms to associate with each rule.
 // TODO: optionally use random numbers to avoid collisions.
-pub fn genaux(aux: &str, id: usize, atoms: &HashSet<Atom>) -> Atom {
+pub fn genaux(aux: &str, id: usize, atoms: &Interpretation) -> Atom {
     assert!(!aux.is_empty(), "can't make an aux atom without a prefix");
     for i in 0..100 {
         let x = aux[aux.len() - 1..].repeat(i);
@@ -317,20 +332,16 @@ impl GroundProgram {
     /// Program completion, also called Clark's completion. See Lifschitz, "ASP" §5.9.
     pub fn complete(self) -> CompleteProgram {
         // Index of which rules' heads contain a given atom.
-        // The linear scan over rule sets is to maintain order; if that gets
-        // too expensive, we can use a hash set or sort & deduplicate.
-        let mut heads = HashMap::<&Atom, Vec<usize>>::new();
+        let mut heads = BTreeMap::<&Atom, BTreeSet<usize>>::new();
         for (i, rule) in self.iter().enumerate() {
             if let Some(a) = &rule.head {
-                let rules = heads.entry(a).or_default();
-                if !rules.iter().any(|&x| x == i) {
-                    rules.push(i);
-                }
+                heads.entry(a).or_insert_with(BTreeSet::new).insert(i);
             }
         }
 
         // Build the constraints.
-        let mut atoms = self.uniq_atoms();
+        let mut atoms = Interpretation::new();
+        self.atoms(&mut atoms);
         let mut constraints = Vec::new();
         for rule in self.iter() {
             if let Some(head) = &rule.head {
@@ -358,12 +369,16 @@ impl GroundProgram {
 }
 
 impl Formula for GroundProgram {
-    fn atoms(&self) -> Vec<Atom> {
-        self.0.atoms()
+    fn atoms(&self, interp: &mut Interpretation) {
+        self.0.atoms(interp)
     }
 
-    fn constants(&self) -> Vec<Constant> {
-        self.0.constants()
+    fn constants(&self, universe: &mut Universe) {
+        self.0.constants(universe)
+    }
+
+    fn variables(&self, names: &mut Names) {
+        self.0.variables(names)
     }
 
     fn is_definite(&self) -> bool {
@@ -417,23 +432,37 @@ impl Constraint {
 }
 
 impl Formula for Constraint {
-    fn atoms(&self) -> Vec<Atom> {
-        self.head
-            .iter()
-            .cloned()
-            .chain(
-                self.body
-                    .iter()
-                    .flat_map(|b| b.iter().flat_map(|c| c.atoms())),
-            )
-            .collect()
+    fn atoms(&self, interp: &mut Interpretation) {
+        for h in self.head.iter() {
+            h.atoms(interp);
+        }
+        for b in self.body.iter() {
+            for c in b {
+                c.atoms(interp);
+            }
+        }
     }
 
-    fn constants(&self) -> Vec<Constant> {
-        self.body
-            .iter()
-            .flat_map(|b| b.iter().flat_map(|c| c.constants()))
-            .collect()
+    fn constants(&self, universe: &mut Universe) {
+        for h in self.head.iter() {
+            h.constants(universe);
+        }
+        for b in self.body.iter() {
+            for c in b {
+                c.constants(universe);
+            }
+        }
+    }
+
+    fn variables(&self, names: &mut Names) {
+        for h in self.head.iter() {
+            h.variables(names);
+        }
+        for b in self.body.iter() {
+            for c in b {
+                c.variables(names);
+            }
+        }
     }
 
     fn is_definite(&self) -> bool {
@@ -522,12 +551,22 @@ impl CompleteProgram {
 }
 
 impl Formula for CompleteProgram {
-    fn atoms(&self) -> Vec<Atom> {
-        self.iter().flat_map(|c| c.atoms()).collect()
+    fn atoms(&self, interp: &mut Interpretation) {
+        for r in self.iter() {
+            r.atoms(interp);
+        }
     }
 
-    fn constants(&self) -> Vec<Constant> {
-        self.iter().flat_map(|c| c.constants()).collect()
+    fn constants(&self, universe: &mut Universe) {
+        for r in self.iter() {
+            r.constants(universe);
+        }
+    }
+
+    fn variables(&self, names: &mut Names) {
+        for r in self.iter() {
+            r.variables(names);
+        }
     }
 
     fn is_definite(&self) -> bool {
@@ -596,12 +635,15 @@ mod test {
         }
     }
 
-    /// Grounding requires us to collect all the constants in a rule.
+    /// Grounding requires us to collect all the unique constants in a rule,
+    /// i.e., its Herbrand Universe.
     #[test]
     fn rule_constants() {
+        let mut constants = Universe::new();
+        rule![p(a, b) if q(b) and f(X) and r(s, t)].constants(&mut constants);
         assert_eq!(
-            rule![p(a, b) if q(b) and f(X) and r(s, t)].constants(),
-            vec![sym![a], sym![b], sym![b], sym![s], sym![t]]
+            constants.into_iter().collect::<Vec<_>>(),
+            vec![sym![a], sym![b], sym![s], sym![t]]
         );
     }
 

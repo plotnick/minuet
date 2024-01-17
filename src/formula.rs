@@ -2,7 +2,7 @@
 //! connectives, which may be evaluated as booleans with resepect to
 //! an interpretation (a set of atoms taken to be true).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::syntax::*;
 
@@ -12,58 +12,58 @@ use crate::syntax::*;
 /// if `f.eval(i) => true`, then the interpretation is called
 /// a _model_ of `f`. If the model is "minimal", then it is called
 /// a _stable_ model, also known as an _answer set_.
-pub type Interpretation = HashSet<Atom>;
+pub type Interpretation = BTreeSet<Atom>;
 
 /// Map variable names to constant values for grounding.
-pub type Bindings = HashMap<Symbol, Constant>;
+pub type Bindings = BTreeMap<Symbol, Constant>;
 
-/// Logicial formulas (which may be "atomic") have sub-structure
-/// that we will sometimes need to collect or inspect. We can also
-/// evaluate them with respect to an interpretation (a set of atoms
-/// taken as true).
-// TODO: walkers.
+/// A set of variable names.
+pub type Names = BTreeSet<Symbol>;
+
+/// The _Herbrand Universe_ is the set of all constants in a program.
+/// It is the source of values to which variables may be bound.
+pub type Universe = BTreeSet<Constant>;
+
+/// Logicial formulas may have sub-structure that we will need to collect
+/// or inspect. We can also evaluate or reduce them with respect to an
+/// interpretation (a set of atoms taken as true), and ground them (bind
+/// all variables to constant values) with respect to a set of bindings.
 pub trait Formula {
-    fn atoms(&self) -> Vec<Atom>;
-    fn constants(&self) -> Vec<Constant>;
+    // Collectors.
+    // TODO: Walkers.
+    fn atoms(&self, interp: &mut Interpretation);
+    fn constants(&self, universe: &mut Universe);
+    fn variables(&self, names: &mut Names);
+
+    // Predicates.
     fn is_definite(&self) -> bool;
     fn is_ground(&self) -> bool;
     fn eval(&self, interp: &Interpretation) -> bool;
+
+    // Transformers.
     fn ground(self, bindings: &Bindings) -> Self;
     fn reduce(self, interp: &Interpretation) -> Self;
-
-    fn uniq_atoms(&self) -> HashSet<Atom> {
-        self.atoms().into_iter().collect()
-    }
-
-    fn variables(&self) -> Vec<Symbol> {
-        self.atoms()
-            .into_iter()
-            .flat_map(|a| {
-                a.arguments
-                    .iter()
-                    .filter_map(|t| match t {
-                        Term::Constant(_) => None,
-                        Term::Variable(x) => Some(x.clone()),
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect()
-    }
 }
 
 impl Formula for Atom {
-    fn atoms(&self) -> Vec<Atom> {
-        vec![self.clone()]
+    fn atoms(&self, interp: &mut Interpretation) {
+        interp.insert(self.clone());
     }
 
-    fn constants(&self) -> Vec<Constant> {
-        self.arguments
-            .iter()
-            .filter_map(|term| match term {
-                Term::Constant(c) => Some(c.clone()),
-                Term::Variable(_) => None,
-            })
-            .collect()
+    fn constants(&self, universe: &mut Universe) {
+        for arg in &self.arguments {
+            if let Term::Constant(c) = arg {
+                universe.insert(c.clone());
+            }
+        }
+    }
+
+    fn variables(&self, names: &mut Names) {
+        for arg in &self.arguments {
+            if let Term::Variable(v) = arg {
+                names.insert(v.clone());
+            }
+        }
     }
 
     fn is_definite(&self) -> bool {
@@ -96,16 +96,16 @@ impl Formula for Atom {
 }
 
 impl Formula for Literal {
-    fn atoms(&self) -> Vec<Atom> {
-        match self {
-            Literal::Positive(atom) | Literal::Negative(atom) => vec![atom.clone()],
-        }
+    fn atoms(&self, interp: &mut Interpretation) {
+        self.atom().atoms(interp);
     }
 
-    fn constants(&self) -> Vec<Constant> {
-        match self {
-            Self::Positive(atom) | Self::Negative(atom) => atom.constants(),
-        }
+    fn constants(&self, universe: &mut Universe) {
+        self.atom().constants(universe);
+    }
+
+    fn variables(&self, names: &mut Names) {
+        self.atom().variables(names);
     }
 
     fn is_definite(&self) -> bool {
@@ -138,20 +138,31 @@ impl Formula for Literal {
 }
 
 impl Formula for Rule {
-    fn atoms(&self) -> Vec<Atom> {
-        self.head
-            .iter()
-            .flat_map(|h| h.atoms())
-            .chain(self.body.iter().flat_map(|b| b.atoms()))
-            .collect()
+    fn atoms(&self, interp: &mut Interpretation) {
+        for h in &self.head {
+            h.atoms(interp);
+        }
+        for b in &self.body {
+            b.atoms(interp);
+        }
     }
 
-    fn constants(&self) -> Vec<Constant> {
-        self.head
-            .iter()
-            .flat_map(|h| h.constants())
-            .chain(self.body.iter().flat_map(|b| b.constants()))
-            .collect()
+    fn constants(&self, universe: &mut Universe) {
+        for h in &self.head {
+            h.constants(universe);
+        }
+        for b in &self.body {
+            b.constants(universe);
+        }
+    }
+
+    fn variables(&self, names: &mut Names) {
+        for h in &self.head {
+            h.variables(names);
+        }
+        for b in &self.body {
+            b.variables(names);
+        }
     }
 
     fn is_definite(&self) -> bool {

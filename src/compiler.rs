@@ -123,7 +123,8 @@ impl XccCompiler {
         program: &CompleteProgram,
         _trace: Trace,
     ) -> (Items<Atom, bool>, Options<Atom, bool>) {
-        let atoms = program.uniq_atoms();
+        let mut atoms = Interpretation::new();
+        program.atoms(&mut atoms);
         let aux = (0..program.len())
             .map(|i| genaux("rule", i, &atoms))
             .collect::<AuxAtoms>();
@@ -149,7 +150,10 @@ impl XccCompiler {
             .flat_map(|(rule, aux)| {
                 // Encode rule-local models as XCC options. Secondary items (non-aux atoms) are
                 // colored with their truth values (inclusion/exlusion) in the interpretation.
-                let atoms = rule.atoms();
+                let mut atoms = Interpretation::new();
+                rule.atoms(&mut atoms);
+                let atoms = atoms.into_iter().collect::<Vec<Atom>>();
+
                 let maybe_make_option = |interp: &Interpretation| -> Option<Items<Atom, bool>> {
                     rule.eval(interp).then(|| {
                         [Item::Primary(aux.clone())]
