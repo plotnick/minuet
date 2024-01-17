@@ -9,7 +9,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use crate::formula::{Formula, Interpretation};
+use crate::formula::{Bindings, Formula, Interpretation};
 use crate::syntax::*;
 
 /// A program is a collection of rules that we'll process in strict order,
@@ -64,8 +64,11 @@ pub struct NormalRule {
 }
 
 impl NormalRule {
-    fn new(head: Option<Atom>, body: Vec<Literal>) -> Self {
-        Self { head, body }
+    fn new(head: Option<Atom>, body: impl IntoIterator<Item = Literal>) -> Self {
+        Self {
+            head,
+            body: body.into_iter().collect(),
+        }
     }
 
     /// Build a set of normal (non-disjunctive) rules from a disjunctive rule, one
@@ -88,8 +91,7 @@ impl NormalRule {
                                 } else {
                                     None
                                 }
-                            }))
-                            .collect(),
+                            })),
                     )
                 })
                 .collect::<Vec<_>>()
@@ -124,6 +126,13 @@ impl Formula for NormalRule {
 
     fn eval(&self, interp: &Interpretation) -> bool {
         self.head.iter().any(|h| h.eval(interp)) && self.body.iter().all(|b| b.eval(interp))
+    }
+
+    fn ground(self, bindings: &Bindings) -> Self {
+        Self::new(
+            self.head.map(|h| h.ground(bindings)),
+            self.body.into_iter().map(|b| b.ground(bindings)),
+        )
     }
 
     fn reduce(self, _interp: &Interpretation) -> Self {
@@ -176,14 +185,53 @@ impl NormalProgram {
         self.0.len()
     }
 
+    /// Ground all variables in all possible ways.
+    // TODO: less naïve grounding.
     pub fn ground(self) -> GroundProgram {
-        let _universe = self
+        let mut constants = self
             .iter()
             .flat_map(|rule| rule.constants())
-            .collect::<Universe>();
-        let program = self;
-        // TODO: naïve grounding
-        GroundProgram::new(program)
+            .collect::<Vec<Constant>>();
+        constants.sort_unstable_by(|a, b| a.name().cmp(b.name()));
+        constants.dedup();
+
+        let mut variables = self
+            .iter()
+            .flat_map(|rule| rule.variables())
+            .collect::<Vec<Symbol>>();
+        variables.sort_unstable_by(|a, b| a.name().cmp(b.name()));
+        variables.dedup();
+
+        let (mut rules, var_rules): (Vec<_>, Vec<_>) =
+            self.into_iter().partition(|r| r.is_ground());
+
+        // Knuth Algorithm 7.2.1.1L (Mixed-radix generation).
+        let m = constants.len();
+        let n = variables.len();
+        let mut a = vec![0; n + 1];
+        let bind = |a: &[usize]| -> Bindings {
+            a.iter()
+                .copied()
+                .enumerate()
+                .map(|(i, j)| (variables[i].clone(), constants[j].clone()))
+                .collect::<Bindings>()
+        };
+        loop {
+            let b = bind(&a[1..]);
+            rules.extend(var_rules.iter().cloned().map(|r| r.ground(&b)));
+
+            let mut j = n;
+            while a[j] == m - 1 {
+                a[j] = 0;
+                j -= 1;
+            }
+            if j == 0 {
+                break;
+            }
+            a[j] += 1;
+        }
+
+        GroundProgram::new(NormalProgram::new(rules))
     }
 }
 
@@ -208,6 +256,10 @@ impl Formula for NormalProgram {
         self.iter().all(|r| r.eval(interp))
     }
 
+    fn ground(self, bindings: &Bindings) -> Self {
+        Self(self.into_iter().map(|r| r.ground(bindings)).collect())
+    }
+
     fn reduce(self, interp: &Interpretation) -> Self {
         Self(self.into_iter().map(|r| r.reduce(interp)).collect())
     }
@@ -222,9 +274,6 @@ impl fmt::Display for NormalProgram {
         Ok(())
     }
 }
-
-/// The Herbrand universe of all constants that appear in a program.
-pub type Universe = HashSet<Constant>;
 
 /// Auxiliary atoms that represent rules.
 pub type AuxAtoms = Vec<Atom>;
@@ -329,6 +378,11 @@ impl Formula for GroundProgram {
         self.0.eval(interp)
     }
 
+    /// Assume we're already ground.
+    fn ground(self, _bindings: &Bindings) -> Self {
+        self
+    }
+
     fn reduce(self, interp: &Interpretation) -> Self {
         Self(self.0.reduce(interp))
     }
@@ -395,6 +449,11 @@ impl Formula for Constraint {
     fn eval(&self, interp: &Interpretation) -> bool {
         self.head.as_ref().is_some_and(|head| interp.contains(head))
             == self.body.iter().any(|b| b.iter().all(|c| c.eval(interp)))
+    }
+
+    /// Assume we're already ground.
+    fn ground(self, _bindings: &Bindings) -> Self {
+        self
     }
 
     /// Delete each disjunct that has a negative literal `not b` with `b ∈ I`,
@@ -481,6 +540,10 @@ impl Formula for CompleteProgram {
 
     fn eval(&self, interp: &Interpretation) -> bool {
         self.iter().all(|c| c.eval(interp))
+    }
+
+    fn ground(self, bindings: &Bindings) -> Self {
+        Self(self.into_iter().map(|r| r.ground(bindings)).collect())
     }
 
     fn reduce(self, interp: &Interpretation) -> Self {
@@ -584,7 +647,6 @@ mod test {
 
     /// This program needs a bit of grounding.
     #[test]
-    #[ignore = "no grounder yet"]
     fn ground_trivial_1() {
         let rules = [rule![p(X) if p(a) and p(b)]];
         let program = Program::new(rules).normalize();
@@ -597,6 +659,23 @@ mod test {
         assert_eq!(
             ground.into_iter().collect::<Vec<_>>(),
             vec![nrule![p(a) if p(a) and p(b)], nrule![p(b) if p(a) and p(b)]],
+        );
+    }
+
+    /// And this one needs a bit more.
+    #[test]
+    fn ground_gelfond_lifschitz_5() {
+        let rules = [rule![p(a, b)], rule![q(X) if p(X, Y) and not q(Y)]];
+        let ground = Program::new(rules).normalize().ground();
+        assert_eq!(
+            ground.into_iter().collect::<Vec<_>>(),
+            vec![
+                nrule![p(a, b)],
+                nrule![q(a) if p(a, a) and not q(a)],
+                nrule![q(a) if p(a, b) and not q(b)],
+                nrule![q(b) if p(b, a) and not q(a)],
+                nrule![q(b) if p(b, b) and not q(b)],
+            ]
         );
     }
 

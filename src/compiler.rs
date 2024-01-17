@@ -201,12 +201,14 @@ impl XccCompiler {
             match result {
                 Err(error) => Err(error),
                 Ok(answer) => {
+                    let stable = answer == *model;
                     trace!(
                         trace,
-                        "Got answer to reduced problem: {}",
-                        format_answer(&answer)
+                        "Got answer {} to reduct; model is{} stable",
+                        format_answer(&answer),
+                        if stable { "" } else { " not" },
                     );
-                    Ok(answer == *model)
+                    Ok(stable)
                 }
             }
         } else {
@@ -324,7 +326,7 @@ mod test {
     }
 
     macro_rules! assert_answers {
-        ($answers:expr, [$({$($head:ident$(($($arg:tt),*))?),*}),*]) => {
+        ($answers:expr, [$({$($head:ident$(($($arg:tt),*))?),*}),* $(,)?]) => {
             let expected = [$(answer_set!{$($head$(($($arg),*))?),*}),*];
             assert!($answers == expected,
                     "Expected answer sets {{{}}}, got {{{}}}",
@@ -448,5 +450,60 @@ mod test {
         let xcc = XccCompiler::new(rules, false).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{ c }]);
+    }
+
+    /// Gelfond & Lifschitz, program (5).
+    #[test]
+    fn gelfond_lifschitz_5() {
+        let rules = [rule![p(a, b)], rule![q(X) if p(X, Y) and not q(Y)]];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{ p(a, b), q(a) }]);
+    }
+
+    /// Gelfond & Lifschitz, program (5), remark 3.
+    #[test]
+    fn gelfond_lifschitz_5_3() {
+        let rules = [
+            rule![p(a, b)],
+            rule![p(b, a)],
+            rule![q(X) if p(X, Y) and not q(Y)],
+        ];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [
+            { p(a, b), p(b, a), q(b) },
+            { p(a, b), p(b, a), q(a) },
+        ]);
+    }
+
+    /// Gelfond & Lifschitz, program (6).
+    #[test]
+    fn gelfond_lifschitz_6() {
+        let rules = [
+            rule![p if q and not r],
+            rule![q if r and not p],
+            rule![r if p and not q],
+        ];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{}]);
+    }
+
+    /// https://potassco.org/doc/start/
+    #[test]
+    fn potassco_start() {
+        let rules = [
+            rule![innocent(Suspect) if motive(Suspect) and not guilty(Suspect)],
+            rule![motive(harry)],
+            rule![motive(sally)],
+            rule![guilty(harry)],
+        ];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(
+            answers[..],
+            [{motive(harry), motive(sally), guilty(harry), innocent(sally)}]
+        );
     }
 }

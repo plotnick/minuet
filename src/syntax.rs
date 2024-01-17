@@ -42,7 +42,7 @@ pub type Constant = Symbol;
 /// or something else (a variable).
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Term {
-    Constant(Symbol),
+    Constant(Constant),
     Variable(Symbol),
 }
 
@@ -96,10 +96,10 @@ pub struct Atom {
 }
 
 impl Atom {
-    pub fn new(predicate: Symbol, arguments: Vec<Term>) -> Self {
+    pub fn new(predicate: Symbol, arguments: impl IntoIterator<Item = Term>) -> Self {
         Self {
             predicate,
-            arguments,
+            arguments: arguments.into_iter().collect(),
         }
     }
 }

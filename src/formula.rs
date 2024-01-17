@@ -2,7 +2,7 @@
 //! connectives, which may be evaluated as booleans with resepect to
 //! an interpretation (a set of atoms taken to be true).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::syntax::*;
 
@@ -13,6 +13,9 @@ use crate::syntax::*;
 /// a _model_ of `f`. If the model is "minimal", then it is called
 /// a _stable_ model, also known as an _answer set_.
 pub type Interpretation = HashSet<Atom>;
+
+/// Map variable names to constant values for grounding.
+pub type Bindings = HashMap<Symbol, Constant>;
 
 /// Logicial formulas (which may be "atomic") have sub-structure
 /// that we will sometimes need to collect or inspect. We can also
@@ -25,9 +28,26 @@ pub trait Formula {
     fn is_definite(&self) -> bool;
     fn is_ground(&self) -> bool;
     fn eval(&self, interp: &Interpretation) -> bool;
+    fn ground(self, bindings: &Bindings) -> Self;
     fn reduce(self, interp: &Interpretation) -> Self;
+
     fn uniq_atoms(&self) -> HashSet<Atom> {
         self.atoms().into_iter().collect()
+    }
+
+    fn variables(&self) -> Vec<Symbol> {
+        self.atoms()
+            .into_iter()
+            .flat_map(|a| {
+                a.arguments
+                    .iter()
+                    .filter_map(|t| match t {
+                        Term::Constant(_) => None,
+                        Term::Variable(x) => Some(x.clone()),
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
     }
 }
 
@@ -58,6 +78,16 @@ impl Formula for Atom {
 
     fn eval(&self, interp: &Interpretation) -> bool {
         interp.contains(self)
+    }
+
+    fn ground(self, bindings: &Bindings) -> Self {
+        Self::new(
+            self.predicate,
+            self.arguments.into_iter().map(|arg| match arg {
+                Term::Constant(sym) => Term::Constant(sym),
+                Term::Variable(sym) => Term::Constant(bindings[&sym].clone()),
+            }),
+        )
     }
 
     fn reduce(self, _interp: &Interpretation) -> Self {
@@ -95,6 +125,13 @@ impl Formula for Literal {
         }
     }
 
+    fn ground(self, bindings: &Bindings) -> Self {
+        match self {
+            Self::Positive(atom) => Self::Positive(atom.ground(bindings)),
+            Self::Negative(atom) => Self::Negative(atom.ground(bindings)),
+        }
+    }
+
     fn reduce(self, _interp: &Interpretation) -> Self {
         self
     }
@@ -127,6 +164,10 @@ impl Formula for Rule {
 
     fn eval(&self, interp: &Interpretation) -> bool {
         self.head.iter().any(|h| h.eval(interp)) && self.body.iter().all(|b| b.eval(interp))
+    }
+
+    fn ground(self, _bindings: &Bindings) -> Self {
+        todo!("ground rule")
     }
 
     fn reduce(self, _interp: &Interpretation) -> Self {
