@@ -6,8 +6,10 @@ mod tracer;
 mod compiler;
 mod domain;
 mod formula;
+mod generate;
 mod semantics;
 mod solver;
+mod values;
 
 use compiler::{XccCompiler, XccError};
 

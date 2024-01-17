@@ -9,7 +9,7 @@
 //! But not all of those models are necessarily _stable models_, i.e.,
 //! _answer sets_; see Gelfond & Lifschitz "The Stable Model Semantics
 //! for Logic Programming" (1988), Lifschitz "Answer Set Programming"
-//! (2019 draft, but really anything & everything by Lifschitz is helpful)
+//! (2019 draft; but anything & everything by Lifschitz is helpful),
 //! Dodaro's dissertation "Computational Tasks in Answer Set Programming"
 //! (2013) and his work with Alviano et al., etc.
 //!
@@ -41,8 +41,8 @@ use crate::tracer::*;
 
 pub use crate::solver::XccError; // re-export
 
-/// An interpretation (a set of atoms which are "true") that satisfy a program.
-pub type AnswerSet = Interpretation;
+/// A stable model of the program (Gelfond & Lifschitz 1988).
+pub type AnswerSet = Model;
 
 /// Searching for an answer set may fail.
 pub type AnswerResult = Result<AnswerSet, XccError<Atom, bool>>;
@@ -76,31 +76,6 @@ impl XccCompiler {
         trace!(trace, "Compiling program:\n{}", program);
 
         let (items, options) = Self::compile(&program, trace);
-        trace!(
-            trace,
-            "XCC Items: {{{}}}",
-            items
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        trace!(
-            trace,
-            "XCC Options: {{\n  {}\n}}\n",
-            options
-                .iter()
-                .map(|o| format!(
-                    "{{{}}}",
-                    o.iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ))
-                .collect::<Vec<_>>()
-                .join(",\n  ")
-        );
-
         let solver = DancingCells::new(items, options, trace)?;
         Ok(Self {
             program,
@@ -115,17 +90,17 @@ impl XccCompiler {
 
     /// Turn a normalized, grounded, completed program into an exact cover problem
     /// whose solutions are in 1-1 correspondence with the (not necessarily stable)
-    /// models of the program. We use the idea of Knuth's Exercise 7.2.2.1-(76c):
+    /// models of that program. We use the idea of Knuth's Exercise 7.2.2.1-(76c):
     /// our primary items are fresh atoms {rule_R} representing the rules {R},
-    /// our secondary items are all other atoms {x, y, ...}, and our options are
-    /// sets of the form {rule_R, x:bool, y:bool, ...} for every combination
+    /// our secondary items are all other atoms {x, y, ...}, and our options
+    /// are sets of the form {rule_R, x:bool, y:bool, ...} for every combination
     /// of {x, y, ... ∈ R} that makes R true (i.e., local models of the rules).
     /// As Knuth notes, this is not a particularly efficient encoding (because
     /// it only gets one primary item per option), and we should try to improve
     /// on it (like looking for jointly (un)satisfying local models).
     fn compile(
         program: &CompleteProgram,
-        _trace: Trace,
+        trace: Trace,
     ) -> (Items<Atom, bool>, Options<Atom, bool>) {
         let mut atoms = Interpretation::new();
         program.atoms(&mut atoms);
@@ -157,6 +132,9 @@ impl XccCompiler {
                 rule.atoms(&mut atoms);
                 let atoms = atoms.into_iter().collect::<Vec<Atom>>();
 
+                // Look for local models by trying all possible interpretations
+                // over the rule's atoms (via Gray codes), including the empty set.
+                let mut interp = Interpretation::new();
                 let maybe_make_option = |interp: &Interpretation| -> Option<Items<Atom, bool>> {
                     rule.eval(interp).then(|| {
                         [Item::Primary(aux.clone())]
@@ -169,26 +147,53 @@ impl XccCompiler {
                             .collect()
                     })
                 };
-
-                // Look for local models by trying all possible interpretations
-                // over the rule's atoms (via Gray codes), including the empty set.
-                let mut interp = Interpretation::new();
-                maybe_make_option(&interp)
-                    .into_iter()
-                    .chain(
-                        InclusionExclusion::of_len(atoms.len()).filter_map(|mutation| {
-                            match mutation {
-                                SetMutation::Insert(i) => interp.insert(atoms[i].clone()),
-                                SetMutation::Remove(i) => interp.remove(&atoms[i]),
-                            };
-                            maybe_make_option(&interp)
-                        }),
-                    )
-                    .collect::<Options<Atom, bool>>()
+                if atoms.is_empty() {
+                    maybe_make_option(&interp)
+                        .into_iter()
+                        .collect::<Options<Atom, bool>>()
+                } else {
+                    maybe_make_option(&interp)
+                        .into_iter()
+                        .chain(
+                            InclusionExclusion::of_len(atoms.len()).filter_map(|mutation| {
+                                match mutation {
+                                    SetMutation::Insert(i) => interp.insert(atoms[i].clone()),
+                                    SetMutation::Remove(i) => interp.remove(&atoms[i]),
+                                };
+                                maybe_make_option(&interp)
+                            }),
+                        )
+                        .collect::<Options<Atom, bool>>()
+                }
             })
             .collect::<BTreeSet<Items<Atom, bool>>>()
             .into_iter()
             .collect::<Options<Atom, bool>>();
+
+        trace!(
+            trace,
+            "XCC Items: {{{}}}",
+            items
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        trace!(
+            trace,
+            "XCC Options: {{\n  {}\n}}\n",
+            options
+                .iter()
+                .map(|o| format!(
+                    "{{{}}}",
+                    o.iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+                .collect::<Vec<_>>()
+                .join(",\n  ")
+        );
         (items, options)
     }
 
@@ -196,7 +201,7 @@ impl XccCompiler {
     /// (previously found) of the full problem.
     fn is_stable_model(
         program: CompleteProgram,
-        model: &Interpretation,
+        model: &Model,
         trace: Trace,
     ) -> Result<bool, XccError<Atom, bool>> {
         let reduct = program.reduce(model);
@@ -225,13 +230,15 @@ impl XccCompiler {
     }
 }
 
-/// A definite program has a unique minimal model. We should probably
-/// set up & solve a slightly different problem to find it, but for
-/// now we'll just grab all the solutions and pick the minimal element
-/// (the one that has no other models as a subset). For non-definite
-/// programs (ones that involve negation), we must check each model
-/// for stability.
+/// An empty program has a trivial model. A non-empty definite (positive)
+/// program has a unique minimal model; we should probably set up & solve
+/// a slightly different problem to find it, but for now we'll just grab
+/// all the solutions and pick the minimal element (the one that has no
+/// other models as a subset). For non-definite programs (ones with negation),
+/// we must check each model for stability. We use `Option::take` on the
+/// first two to ensure we yield an answer just once.
 pub enum Answer<'a> {
+    TrivialModel(Option<AnswerSet>),
     UniqueModel(Option<DanceStep<'a, Atom, bool>>),
     StableModels(DanceStep<'a, Atom, bool>),
 }
@@ -250,7 +257,9 @@ impl<'a> AnswerStep<'a> {
     ) -> Self {
         Self {
             program,
-            answer: if program.is_definite() {
+            answer: if program.is_empty() {
+                Answer::TrivialModel(Some(AnswerSet::new()))
+            } else if program.is_definite() {
                 Answer::UniqueModel(Some(step))
             } else {
                 Answer::StableModels(step)
@@ -283,6 +292,7 @@ impl<'a> Iterator for AnswerStep<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.answer {
+            Answer::TrivialModel(ref mut model) => model.take().map(Result::Ok),
             Answer::UniqueModel(ref mut step) => step.take().and_then(|step| {
                 match step
                     .map(|r| r.map(|s| Self::answer(self.program, s)))
@@ -367,11 +377,181 @@ mod test {
     }
 
     #[test]
+    fn arg_0() {
+        let rules = [rule![p()]];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{ p }]);
+    }
+
+    #[test]
+    fn arg_1() {
+        let rules = [rule![p(1)]];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{ p(1) }]);
+    }
+
+    #[test]
+    fn arg_2() {
+        let rules = [rule![p(1, 2)]];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{ p(1, 2) }]);
+    }
+
+    #[test]
+    fn constraint_1() {
+        let rules = [rule![if p]];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{}]);
+    }
+
+    #[test]
     fn circular_1() {
         let rules = [rule![p if p]];
         let xcc = XccCompiler::new(rules, false).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{}]);
+    }
+
+    #[test]
+    fn disjunctive_1() {
+        let rules = [rule![p or p]];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{ p }]);
+    }
+
+    #[test]
+    fn disjunctive_2() {
+        let rules = [rule![p or q]];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{ q }, { p }]);
+    }
+
+    #[test]
+    fn relational_0() {
+        let rules = [rule![0 != 0]];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], []);
+    }
+
+    #[test]
+    fn relational_1() {
+        let rules = [rule![1 = 1]];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{}]);
+    }
+
+    #[test]
+    fn relational_2() {
+        let rules = [rule![0 = 1 or 1 = 1]];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{}]);
+    }
+
+    #[test]
+    fn arithmetic_0() {
+        let rules = [rule![((0 + 0) = 1)]];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], []);
+    }
+
+    #[test]
+    fn arithmetic_1() {
+        let rules = [rule![((1 + 1) = 2)]];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{}]);
+    }
+
+    #[test]
+    fn arithmetic_1a() {
+        let rules = [rule![((|(-1)|) = 1)]];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{}]);
+    }
+
+    #[test]
+    fn arithmetic_1s() {
+        let rules = [rule![((foo + bar) = foobar)]];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{}]);
+    }
+
+    #[test]
+    fn arithmetic_2() {
+        let rules = [rule![((2 - 1) = 1)]];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{}]);
+    }
+
+    #[test]
+    fn arithmetic_2s() {
+        let rules = [rule![((foobar - bar) = foo)]];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{}]);
+    }
+
+    #[test]
+    fn arithmetic_3() {
+        let rules = [rule![(0 = (1 + 1)) or (1 = (2 - 2)) or (3 = (3 + 0))]];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{}]);
+    }
+
+    #[test]
+    fn arithmetic_4() {
+        let rules = [rule![p((2 + 2))]];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{ p(4) }]);
+    }
+
+    // #[test]
+    // fn arithmetic_5() {
+    //     let rules = [rule![((1..3) * 2 = {2 or 4 or 6})]];
+    //     let xcc = XccCompiler::new(rules, false).unwrap();
+    //     let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+    //     assert_answers!(answers[..], [{}]);
+    // }
+
+    // #[test]
+    // fn choice_1() {
+    //     let rules = [rule![{p}]];
+    //     let xcc = XccCompiler::new(rules, false).unwrap();
+    //     let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+    //     assert_answers!(answers[..], [{p(a), p(b)}]);
+    // }
+
+    // #[test]
+    // fn choice_2() {
+    //     let rules = [rule![{p(a or b, 1 or 2)}]];
+    //     let xcc = XccCompiler::new(rules, false).unwrap();
+    //     let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+    //     assert_answers!(answers[..], [{p(a), p(b)}]);
+    // }
+
+    /// Lifschitz, "ASP", §5.4. Also Aristotle, Shakespeare ("to p, or not p;
+    /// that is the question"), etc.
+    #[test]
+    fn excluded_middle() {
+        let rules = [rule![p or not p]];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{}, { p }]);
     }
 
     /// Lifschitz, "From Felicitous Models to Answer Set Programming", §3.
@@ -398,7 +578,7 @@ mod test {
         let rules = [rule![p or q], rule![r if p], rule![s if q]];
         let xcc = XccCompiler::new(rules, false).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{p, r}, {q, s}]);
+        assert_answers!(answers[..], [{q, s}, {p, r}]);
     }
 
     /// Lifschitz, "ASP", §5.1.
@@ -440,7 +620,38 @@ mod test {
         let rules = [rule![p if not q], rule![q if not p]];
         let xcc = XccCompiler::new(rules, false).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{ p }, { q }]);
+        assert_answers!(answers[..], [{ q }, { p }]);
+    }
+
+    /// Lifschitz, "ASP", exercise 4.34.
+    #[test]
+    fn asp_4_34() {
+        let rules = [rule![p(1)], rule![q if p(1..3)]];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{ p(1), q }]);
+    }
+
+    /// Lifschitz, "ASP", exercise 2.7.
+    #[test]
+    fn asp_2_7() {
+        // Rule (2.7)
+        let rules = [rule![p(N, ((N*N)+(N+41))) if N = (0..3)]];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{ p(0, 41), p(1, 43), p(2, 47), p(3, 53) }]);
+
+        // Exercise 2.7 (a)
+        let rules = [rule![p(N, ((N*N)+(N+41))) if ((N+1) = (1..4))]];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{ p(1, 43), p(2, 47), p(3, 53) }]);
+
+        // Exercise 2.7 (b), same answer set as rule (2.7)
+        let rules = [rule![p(N, ((N*N)+(N+41))) if (N = ((-3)..3)) and (N >= 0)]];
+        let xcc = XccCompiler::new(rules, false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{ p(0, 41), p(1, 43), p(2, 47), p(3, 53) }]);
     }
 
     #[test]
@@ -462,25 +673,25 @@ mod test {
     /// Gelfond & Lifschitz, program (5).
     #[test]
     fn gelfond_lifschitz_5() {
-        let rules = [rule![p(a, b)], rule![q(X) if p(X, Y) and not q(Y)]];
+        let rules = [rule![p(1, 2)], rule![q(X) if p(X, Y) and not q(Y)]];
         let xcc = XccCompiler::new(rules, false).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{ p(a, b), q(a) }]);
+        assert_answers!(answers[..], [{ p(1, 2), q(1) }]);
     }
 
     /// Gelfond & Lifschitz, program (5), remark 3.
     #[test]
     fn gelfond_lifschitz_5_3() {
         let rules = [
-            rule![p(a, b)],
-            rule![p(b, a)],
+            rule![p(1, 2)],
+            rule![p(2, 1)],
             rule![q(X) if p(X, Y) and not q(Y)],
         ];
         let xcc = XccCompiler::new(rules, false).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [
-            { p(a, b), p(b, a), q(b) },
-            { p(a, b), p(b, a), q(a) },
+            {p(1, 2), p(2, 1), q(1)},
+            {p(1, 2), p(2, 1), q(2)},
         ]);
     }
 

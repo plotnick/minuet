@@ -10,7 +10,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::formula::{Bindings, Formula, Interpretation, Names, Universe};
+use crate::generate::combinations_mixed;
 use crate::syntax::*;
+use crate::values::IntoImage;
 
 /// A program is a collection of rules that we'll process in strict order,
 /// generating a new (potentially much larger) set of rules at each stage:
@@ -55,9 +57,9 @@ impl fmt::Display for Program {
     }
 }
 
-/// A "normal" (non-disjunctive, Prolog-style) rule has at most one head atom
-/// and a (possibly empty) conjunctive body.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+/// A "normal" (non-disjunctive, Prolog-style) rule has at most one (positive)
+/// head atom and a (possibly empty) conjunctive body.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NormalRule {
     head: Option<Atom>,
     body: Vec<Literal>,
@@ -71,27 +73,40 @@ impl NormalRule {
         }
     }
 
-    /// Build a set of normal (non-disjunctive) rules from a disjunctive rule, one
-    /// for each atom in the head. Also called rule shifting (Dodaro Definition 10).
+    /// Build a set of normal (non-disjunctive) rules from a disjunctive
+    /// rule, one for each atom in the head. Also called rule shifting
+    /// (Dodaro Definition 10). But first move non-positive terms from
+    /// the head to the body (negated); see Lifschitz, "ASP" §5.8.
     fn normalize(rule: &Rule) -> Vec<Self> {
-        if rule.head.is_empty() {
-            vec![Self::new(None, rule.body.clone())]
+        let (positive, negative): (Vec<_>, Vec<_>) =
+            rule.head.iter().partition(|l| l.is_positive());
+
+        let head: Vec<Atom> = positive
+            .into_iter()
+            .cloned()
+            .map(|l| match l {
+                Literal::Positive(a) => a,
+                _ => panic!("positive partition"),
+            })
+            .collect();
+
+        let mut body = rule.body.clone();
+        body.extend(negative.into_iter().cloned().map(|l| l.negate()));
+
+        if head.is_empty() {
+            vec![Self::new(None, body)]
         } else {
-            rule.head
-                .iter()
+            head.iter()
                 .map(|h| {
                     Self::new(
                         Some(h.clone()),
-                        rule.body
-                            .iter()
-                            .cloned()
-                            .chain(rule.head.iter().filter_map(|a| {
-                                if a != h {
-                                    Some(Literal::Negative(a.clone()))
-                                } else {
-                                    None
-                                }
-                            })),
+                        body.iter().cloned().chain(head.iter().filter_map(|a| {
+                            if a != h {
+                                Some(Literal::Negative(a.clone()))
+                            } else {
+                                None
+                            }
+                        })),
                     )
                 })
                 .collect::<Vec<_>>()
@@ -210,31 +225,16 @@ impl NormalProgram {
         let (mut rules, var_rules): (Vec<_>, Vec<_>) =
             self.into_iter().partition(|r| r.is_ground());
 
-        // Knuth Algorithm 7.2.1.1L (Mixed-radix generation).
         let m = constants.len();
         let n = variables.len();
-        let mut a = vec![0; n + 1];
-        let bind = |a: &[usize]| -> Bindings {
-            a.iter()
-                .copied()
+        combinations_mixed(n, &vec![m; n], |a: &[usize]| {
+            let b = a
+                .iter()
                 .enumerate()
-                .map(|(i, j)| (variables[i].clone(), constants[j].clone()))
-                .collect::<Bindings>()
-        };
-        loop {
-            let b = bind(&a[1..]);
+                .map(|(i, &j)| (variables[i].clone(), constants[j].clone()))
+                .collect::<Bindings>();
             rules.extend(var_rules.iter().cloned().map(|r| r.ground(&b)));
-
-            let mut j = n;
-            while a[j] == m - 1 {
-                a[j] = 0;
-                j -= 1;
-            }
-            if j == 0 {
-                break;
-            }
-            a[j] += 1;
-        }
+        });
 
         GroundProgram::new(NormalProgram::new(rules))
     }
@@ -325,44 +325,58 @@ impl GroundProgram {
         self.0.into_iter()
     }
 
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    /// Program completion, also called Clark's completion. See Lifschitz, "ASP" §5.9.
+    /// Program completion, also called Clark's completion.
+    /// See Lifschitz, "ASP" §5.9.
     pub fn complete(self) -> CompleteProgram {
         // Index of which rules' heads contain a given atom.
-        let mut heads = BTreeMap::<&Atom, BTreeSet<usize>>::new();
+        let mut heads = BTreeMap::<Atom, BTreeSet<usize>>::new();
         for (i, rule) in self.iter().enumerate() {
             if let Some(a) = &rule.head {
-                heads.entry(a).or_default().insert(i);
+                heads.entry(a.clone()).or_default().insert(i);
+            }
+        }
+
+        // Expand head atoms.
+        let mut raw_atoms = Interpretation::new();
+        let mut atoms = Interpretation::new();
+        self.atoms(&mut raw_atoms);
+        for atom in raw_atoms {
+            let bodies = heads.get(&atom).cloned().unwrap_or_default();
+            for image in atom.into_image() {
+                // TODO: Many atoms will have only themselves as images.
+                heads
+                    .entry(image.clone())
+                    .or_default()
+                    .extend(bodies.clone().into_iter());
+                atoms.insert(image);
             }
         }
 
         // Build the constraints.
-        let mut atoms = Interpretation::new();
-        self.atoms(&mut atoms);
         let mut constraints = Vec::new();
         for rule in self.iter() {
-            if let Some(head) = &rule.head {
-                if atoms.remove(head) {
-                    constraints.push(Constraint::new(
-                        Some(head.clone()),
-                        heads
-                            .get(&head)
-                            .map(|rules| {
-                                rules
-                                    .iter()
-                                    .map(|&i| self.0 .0[i].body.clone())
-                                    .collect::<Vec<_>>()
-                            })
-                            .unwrap_or_default(),
-                    ));
+            match &rule.head {
+                None => constraints.push(Constraint::new(None, vec![rule.body.clone()])),
+                Some(head) => {
+                    for head in head.clone().into_image() {
+                        if atoms.remove(&head) {
+                            let bodies = heads
+                                .get(&head)
+                                .map(|rules| {
+                                    rules
+                                        .iter()
+                                        .map(|&i| self.0 .0[i].body.clone())
+                                        .collect::<Vec<_>>()
+                                })
+                                .unwrap_or_default();
+                            let images = bodies.into_iter().flat_map(|body| body.into_image());
+                            constraints.push(Constraint::new(Some(head.clone()), images));
+                        }
+                    }
                 }
-            } else {
-                constraints.push(Constraint::new(None, vec![rule.body.clone()]));
             }
         }
+        // TODO: if !atoms.is_empty() { trace: atoms unused in any head }
 
         CompleteProgram::new(constraints)
     }
@@ -416,7 +430,7 @@ impl fmt::Display for GroundProgram {
 /// The result of completion is a set of constraints: equivalences
 /// for each atom, where the body is now a *disjunction* of normal
 /// (conjunctive) rule bodies; see Lifschitz, "ASP" §5.9.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Constraint {
     head: Option<Atom>,
     body: Vec<Vec<Literal>>,
@@ -476,7 +490,7 @@ impl Formula for Constraint {
     }
 
     fn eval(&self, interp: &Interpretation) -> bool {
-        self.head.as_ref().is_some_and(|head| interp.contains(head))
+        self.head.as_ref().is_some_and(|h| h.eval(interp))
             == self.body.iter().any(|b| b.iter().all(|c| c.eval(interp)))
     }
 
@@ -548,6 +562,10 @@ impl CompleteProgram {
     pub fn len(&self) -> usize {
         self.0.len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
 }
 
 impl Formula for CompleteProgram {
@@ -613,18 +631,24 @@ mod test {
     }
 
     macro_rules! constraint {
-        [iff $(($($body:tt)*))or+] => {{
+        [iff $(($($body:tt)*))or+] => {
             Constraint::new(
                 None,
                 vec![$(rule![if $($body)*].body),+]
             )
-        }};
-        [$head:ident$(($($arg:tt),*))? iff $(($($body:tt)*))or*] => {{
+        };
+        [$head:ident($($args:tt)*) iff $(($($body:tt)*))or*] => {
             Constraint::new(
-                Some(atom![$head$(($($arg),*))?]),
+                Some(atom![$head($($args)*)]),
                 vec![$(rule![if $($body)*].body),*]
             )
-        }}
+        };
+        [$head:ident iff $(($($body:tt)*))or*] => {
+            Constraint::new(
+                Some(atom![$head]),
+                vec![$(rule![if $($body)*].body),*]
+            )
+        };
     }
 
     macro_rules! interp {
@@ -643,7 +667,7 @@ mod test {
         rule![p(a, b) if q(b) and f(X) and r(s, t)].constants(&mut constants);
         assert_eq!(
             constants.into_iter().collect::<Vec<_>>(),
-            vec![sym![a], sym![b], sym![s], sym![t]]
+            vec![constant![a], constant![b], constant![s], constant![t]]
         );
     }
 
@@ -651,12 +675,16 @@ mod test {
     /// (with at most one head atom).
     #[test]
     fn normalize_disjunctive_rule() {
-        let r = rule![(a or b or c) if d and e];
+        let r = rule![a or b or c if d and e];
         let n = NormalRule::normalize(&r);
-        assert_eq!(n.len(), 3);
-        assert_eq!(n[0], nrule![a if d and e and not b and not c]);
-        assert_eq!(n[1], nrule![b if d and e and not a and not c]);
-        assert_eq!(n[2], nrule![c if d and e and not a and not b]);
+        assert_eq!(
+            n,
+            [
+                nrule![a if d and e and not b and not c],
+                nrule![b if d and e and not a and not c],
+                nrule![c if d and e and not a and not b]
+            ]
+        );
     }
 
     #[test]
@@ -665,6 +693,28 @@ mod test {
         let n = NormalRule::normalize(&r);
         assert_eq!(n.len(), 1);
         assert_eq!(n[0], nrule![if p and q]);
+    }
+
+    #[test]
+    fn normalize_head_negation() {
+        let r = rule![not q];
+        let n = NormalRule::normalize(&r);
+        assert_eq!(n, vec![nrule![if not not q]]);
+
+        let r = rule![p or not q];
+        let n = NormalRule::normalize(&r);
+        assert_eq!(n, vec![nrule![p if not not q]]);
+    }
+
+    #[test]
+    fn normalize_double_head_negation() {
+        let r = rule![not not q];
+        let n = NormalRule::normalize(&r);
+        assert_eq!(n, vec![nrule![if not q]]);
+
+        let r = rule![p or not not q];
+        let n = NormalRule::normalize(&r);
+        assert_eq!(n, vec![nrule![p if not q]]);
     }
 
     /// This program is already ground.
@@ -707,16 +757,16 @@ mod test {
     /// And this one needs a bit more.
     #[test]
     fn ground_gelfond_lifschitz_5() {
-        let rules = [rule![p(a, b)], rule![q(X) if p(X, Y) and not q(Y)]];
+        let rules = [rule![p(1, 2)], rule![q(X) if p(X, Y) and not q(Y)]];
         let ground = Program::new(rules).normalize().ground();
         assert_eq!(
             ground.into_iter().collect::<Vec<_>>(),
             vec![
-                nrule![p(a, b)],
-                nrule![q(a) if p(a, a) and not q(a)],
-                nrule![q(a) if p(a, b) and not q(b)],
-                nrule![q(b) if p(b, a) and not q(a)],
-                nrule![q(b) if p(b, b) and not q(b)],
+                nrule![p(1, 2)],
+                nrule![q(1) if p(1, 1) and not q(1)],
+                nrule![q(1) if p(1, 2) and not q(2)],
+                nrule![q(2) if p(2, 1) and not q(1)],
+                nrule![q(2) if p(2, 2) and not q(2)],
             ]
         );
     }
@@ -751,10 +801,32 @@ mod test {
         );
     }
 
+    #[test]
+    fn complete_interval() {
+        let rules = [rule![p(0..9)], rule![p(10)]];
+        let program = Program::new(rules).normalize().ground().complete();
+        assert_eq!(
+            program.into_iter().collect::<Vec<_>>(),
+            vec![
+                constraint![p(0) iff ()],
+                constraint![p(1) iff ()],
+                constraint![p(2) iff ()],
+                constraint![p(3) iff ()],
+                constraint![p(4) iff ()],
+                constraint![p(5) iff ()],
+                constraint![p(6) iff ()],
+                constraint![p(7) iff ()],
+                constraint![p(8) iff ()],
+                constraint![p(9) iff ()],
+                constraint![p(10) iff ()],
+            ]
+        );
+    }
+
     /// Dodaro example 10.
     #[test]
     fn complete_dodaro_example_10() {
-        let rules = [rule![(a or b)], rule![(c or d) if a]];
+        let rules = [rule![a or b], rule![c or d if a]];
         let program = Program::new(rules).normalize().ground();
         assert_eq!(
             program.iter().cloned().collect::<Vec<_>>(),
@@ -865,5 +937,48 @@ mod test {
             ]
         );
         assert!(program.eval(&interp));
+    }
+
+    #[test]
+    fn eval_excluded_middle() {
+        let rule = rule![p or not p];
+        assert!(rule.eval(&interp! {}));
+        assert!(rule.eval(&interp! {p}));
+    }
+
+    #[test]
+    fn complete_excluded_middle() {
+        let rules = [rule![p or not p]];
+        let ground = Program::new(rules).normalize().ground();
+        assert_eq!(
+            ground.iter().cloned().collect::<Vec<_>>(),
+            vec![nrule![p if not not p]]
+        );
+
+        let complete = ground.complete();
+        assert_eq!(
+            complete.into_iter().collect::<Vec<_>>(),
+            [constraint![p iff (not not p)]]
+        );
+    }
+
+    /// Lifschitz, "ASP" §5.4.
+    #[test]
+    fn reduce_excluded_middle() {
+        let rules = [rule![p or not p]];
+        let program = Program::new(rules).normalize().ground().complete();
+
+        let interp = interp! {};
+        let reduct = program.clone().reduce(&interp);
+        assert!(reduct.eval(&interp));
+        assert_eq!(reduct.into_iter().collect::<Vec<_>>(), [constraint![p iff]]);
+
+        let interp = interp! {p};
+        let reduct = program.clone().reduce(&interp);
+        assert!(reduct.eval(&interp));
+        assert_eq!(
+            reduct.into_iter().collect::<Vec<_>>(),
+            [constraint![p iff ()]]
+        );
     }
 }

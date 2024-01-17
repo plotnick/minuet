@@ -1,5 +1,5 @@
-//! Exact covering with colors (XCC) using "dancing cells"
-//! (Knuth §§7.2.2.1,3, Christmas Lectures 2018,23).
+//! Exact covering with colors (XCC) using dancing cells
+//! (Knuth §§ 7.2.2.1,3, Christmas Lectures 2018, 2023).
 //!
 //! A finite set of *items* is to be exactly covered by a finite subset of
 //! *options* (not to be confused with Rust's `Option`). *Primary items*
