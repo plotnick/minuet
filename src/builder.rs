@@ -1,12 +1,14 @@
 //! Set up an XCC problem.
 
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::string::ToString;
 
 use thiserror::Error;
 
-use crate::solver::{DancingCells, Item, XccError, Options, Items};
+use crate::solver::{DancingCells, Item, Items, Options, XccError};
 
 /// Things that may go wrong setting up an XCC problem.
 #[derive(Debug, Error)]
@@ -44,7 +46,7 @@ fn parse_name(name: impl ToString) -> Result<String, BuildError<String>> {
     Ok(name)
 }
 
-impl<'a> XccBuilder<String, String> {
+impl XccBuilder<String, String> {
     pub fn new() -> Self {
         Self::default()
     }

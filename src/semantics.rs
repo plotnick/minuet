@@ -335,7 +335,7 @@ impl GroundProgram {
         let mut heads = BTreeMap::<&Atom, BTreeSet<usize>>::new();
         for (i, rule) in self.iter().enumerate() {
             if let Some(a) = &rule.head {
-                heads.entry(a).or_insert_with(BTreeSet::new).insert(i);
+                heads.entry(a).or_default().insert(i);
             }
         }
 

@@ -3,6 +3,8 @@
 //! intended as auxiliary data structures in backtracking
 //! search through large (combinatorial) spaces.
 
+#![allow(dead_code)]
+
 #[allow(unused_imports)]
 pub use self::hash::SparseHashSet;
 pub use self::uint::SparseIntegerSet;
@@ -118,7 +120,7 @@ pub mod uint {
 
         #[allow(dead_code)]
         pub fn first(&self) -> Option<T> {
-            self.dom.get(0).copied()
+            self.dom.first().copied()
         }
 
         // TODO: track minimum element across deletions
@@ -291,7 +293,7 @@ pub mod hash {
             assert!(self.len <= self.dom.len());
             assert_eq!(self.dom.len(), self.map.len());
 
-            let i = self.map.get(x).map(|&i| i).unwrap_or(self.len);
+            let i = self.map.get(x).copied().unwrap_or(self.len);
             if i < self.len {
                 self.len -= 1;
                 let j = self.len;

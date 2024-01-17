@@ -263,7 +263,7 @@ where
                 if let Some(color) = item.color() {
                     let i = item_ids[item];
                     let n = color_ids.len() + 1; // 0 = unique color
-                    let c = *color_ids.entry(&color).or_insert(n);
+                    let c = *color_ids.entry(color).or_insert(n);
                     if let Some(&d) = colors.get(&(o, i)) {
                         if d != c {
                             return Err(XccError::SecondaryItemInconsistentlyColored(
@@ -325,7 +325,7 @@ where
     fn decode_solution(&self, solution: &Solution) -> Options<T, C> {
         self.trace_solution(solution);
         solution
-            .into_iter()
+            .iter()
             .map(|&option| self.options[option].clone())
             .collect()
     }
@@ -423,7 +423,8 @@ where
         }
 
         self.trace_state("after covering", &state.active_items, &state.active_options);
-        Ok(state.solution.push(option))
+        state.solution.push(option);
+        Ok(())
     }
 
     /// Save the active state in the trail for backtracking.
@@ -447,7 +448,8 @@ where
                 .iter()
                 .map(|&i| (i, active_options[i].len()))
                 .collect::<Vec<(usize, usize)>>();
-            Ok(trail.push((s, n, options)))
+            trail.push((s, n, options));
+            Ok(())
         }
     }
 
@@ -506,7 +508,7 @@ where
     }
 
     /// If tracing is active, write a solution to stderr.
-    pub fn trace_solution<'a>(&self, solution: &'a Solution) {
+    pub fn trace_solution(&self, solution: &Solution) {
         trace!(
             self.trace,
             "* Got a solution: {}",
@@ -737,11 +739,8 @@ mod test {
         const R: usize = 1_000_000;
 
         // Knuth §7.2.1.1
-        let items = (0..N)
-            .map(|i| Item::<u8, u8>::Primary(i.into()))
-            .collect::<Vec<_>>();
+        let items = (0..N).map(Item::Primary).collect::<Vec<_>>();
         let options = gray_codes::VecSubsets::of(&items)
-            .into_iter()
             .map(|x| x.into_iter().cloned().collect::<Vec<_>>())
             .collect::<Vec<_>>();
 
