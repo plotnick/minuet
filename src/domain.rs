@@ -5,9 +5,9 @@
 
 #![allow(dead_code)]
 
-#[allow(unused_imports)]
-pub use self::hash::SparseHashSet;
-pub use self::uint::SparseIntegerSet;
+use std::cmp::Ord;
+use std::collections::BTreeMap;
+use std::fmt;
 
 /// A finite domain `D` with reversible element deletion.
 pub trait Domain<T> {
@@ -72,128 +72,124 @@ impl<'a, T> Iterator for DomainIterator<'a, T> {
     }
 }
 
-/// Finite domains of unsigned integers.
-pub mod uint {
-    use std::cmp::Ord;
-    use std::collections::BTreeMap;
-    use std::fmt;
+/// A sparse set of integers in the range `0..len`.
+pub struct SparseIntegerSet<T: Copy + Ord> {
+    /// A permutation of the elements.
+    dom: Vec<T>,
 
-    use super::{Domain, DomainIterator};
+    /// The inverse permutation of `dom`.
+    /// Knuth calls this `IDOM`.
+    map: BTreeMap<T, usize>,
 
-    /// A sparse set of integers in the range `0..len`.
-    pub struct SparseIntegerSet<T: Copy + Ord> {
-        /// A permutation of the elements.
-        dom: Vec<T>,
+    /// How many elements are currently present.
+    len: usize,
+}
 
-        /// The inverse permutation of `dom`.
-        /// Knuth calls this `IDOM`.
-        map: BTreeMap<T, usize>,
-
-        /// How many elements are currently present.
-        len: usize,
+impl<T: Copy + Ord> SparseIntegerSet<T> {
+    pub fn new(elements: impl IntoIterator<Item = T>) -> Self {
+        let dom = elements.into_iter().collect::<Vec<T>>();
+        let len = dom.len();
+        let map = dom
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(i, x)| (x, i))
+            .collect::<BTreeMap<T, usize>>();
+        Self { dom, map, len }
     }
 
-    impl<T: Copy + Ord> SparseIntegerSet<T> {
-        pub fn new(elements: impl IntoIterator<Item = T>) -> Self {
-            let dom = elements.into_iter().collect::<Vec<T>>();
-            let len = dom.len();
-            let map = dom
-                .iter()
-                .copied()
-                .enumerate()
-                .map(|(i, x)| (x, i))
-                .collect::<BTreeMap<T, usize>>();
-            Self { dom, map, len }
-        }
-
-        // TODO: move to the trait, if possible
-        pub fn delete_if(&mut self, mut f: impl FnMut(&T) -> bool) -> &[T] {
-            let n = self.len;
-            for i in (0..self.len).rev() {
-                let x = self.dom[i]; // copy
-                if f(&x) {
-                    self.delete(&x);
-                }
-            }
-            self.deleted(n)
-        }
-
-        #[allow(dead_code)]
-        pub fn first(&self) -> Option<T> {
-            self.dom.first().copied()
-        }
-
-        // TODO: track minimum element across deletions
-        // to avoid this linear scan.
-        #[allow(dead_code)]
-        pub fn min(&self) -> Option<T> {
-            self.dom[0..self.len].iter().min().copied()
-        }
-    }
-
-    impl<T: Copy + Ord + fmt::Debug> fmt::Debug for SparseIntegerSet<T> {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.debug_set().entries(self.dom[0..self.len].iter()).finish()
-        }
-    }
-
-    impl<T: Copy + Ord> FromIterator<T> for SparseIntegerSet<T> {
-        fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
-            Self::new(iter)
-        }
-    }
-
-    impl<T: Copy + Ord> Domain<T> for SparseIntegerSet<T> {
-        fn contains(&self, x: &T) -> bool {
-            self.map.get(x).map(|&i| i < self.len).unwrap_or(false)
-        }
-
-        fn delete(&mut self, x: &T) -> bool {
-            assert!(self.len <= self.dom.len());
-            assert_eq!(self.dom.len(), self.map.len());
-
-            let i = self.map.get(x).copied().unwrap_or(self.len);
-            if i < self.len {
-                self.len -= 1;
-                let j = self.len;
-                self.dom.swap(i, j);
-                let y = &self.dom[i];
-                *(self.map.get_mut(x).expect("missing map entry for x")) = j;
-                *(self.map.get_mut(y).expect("missing map entry for y")) = i;
-                true
-            } else {
-                false
+    // TODO: move to the trait, if possible
+    pub fn delete_if(&mut self, mut f: impl FnMut(&T) -> bool) -> &[T] {
+        let n = self.len;
+        for i in (0..self.len).rev() {
+            let x = self.dom[i]; // copy
+            if f(&x) {
+                self.delete(&x);
             }
         }
+        self.deleted(n)
+    }
 
-        fn deleted(&self, n: usize) -> &[T] {
-            &self.dom[self.len..n]
-        }
+    #[allow(dead_code)]
+    pub fn first(&self) -> Option<T> {
+        self.dom.first().copied()
+    }
 
-        fn get(&self, i: usize) -> Option<&T> {
-            self.dom.get(i)
-        }
+    // TODO: track minimum element across deletions
+    // to avoid this linear scan.
+    #[allow(dead_code)]
+    pub fn min(&self) -> Option<T> {
+        self.dom[0..self.len].iter().min().copied()
+    }
+}
 
-        fn restore(&mut self, n: usize) -> bool {
-            assert!(self.len <= self.dom.len());
-            assert_eq!(self.dom.len(), self.map.len());
+impl<T: Copy + Ord + fmt::Debug> fmt::Debug for SparseIntegerSet<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_set().entries(self.dom[0..self.len].iter()).finish()
+    }
+}
 
-            if n <= self.dom.len() {
-                self.len = n;
-                true
-            } else {
-                false
-            }
-        }
+impl<T: Copy + Ord> FromIterator<T> for SparseIntegerSet<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        Self::new(iter)
+    }
+}
 
-        fn len(&self) -> usize {
-            self.len
-        }
+impl<T: Copy + Ord> Domain<T> for SparseIntegerSet<T> {
+    fn contains(&self, x: &T) -> bool {
+        self.map.get(x).map(|&i| i < self.len).unwrap_or(false)
+    }
 
-        fn iter(&self) -> DomainIterator<T> {
-            DomainIterator::new(self)
+    fn delete(&mut self, x: &T) -> bool {
+        assert!(self.len <= self.dom.len());
+        assert_eq!(self.dom.len(), self.map.len());
+
+        let i = self.map.get(x).copied().unwrap_or(self.len);
+        if i < self.len {
+            self.len -= 1;
+            let j = self.len;
+            self.dom.swap(i, j);
+            let y = &self.dom[i];
+            *(self.map.get_mut(x).expect("missing map entry for x")) = j;
+            *(self.map.get_mut(y).expect("missing map entry for y")) = i;
+            true
+        } else {
+            false
         }
     }
+
+    fn deleted(&self, n: usize) -> &[T] {
+        &self.dom[self.len..n]
+    }
+
+    fn get(&self, i: usize) -> Option<&T> {
+        self.dom.get(i)
+    }
+
+    fn restore(&mut self, n: usize) -> bool {
+        assert!(self.len <= self.dom.len());
+        assert_eq!(self.dom.len(), self.map.len());
+
+        if n <= self.dom.len() {
+            self.len = n;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn iter(&self) -> DomainIterator<T> {
+        DomainIterator::new(self)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
 
     #[test]
     fn sparse_integer_set() {
@@ -228,141 +224,5 @@ pub mod uint {
         assert!(dom.delete(&1));
         assert_eq!(dom.deleted(3), [1, 0]);
         assert_eq!(dom.iter().copied().collect::<Vec<_>>(), vec![2]);
-    }
-}
-
-/// Finite domains of arbitrary (hashable) elements.
-pub mod hash {
-    use std::collections::HashMap;
-    use std::fmt;
-    use std::hash::{Hash, Hasher};
-
-    use super::{Domain, DomainIterator};
-
-    /// A sparse set of hashable objects.
-    #[derive(Clone, Eq, PartialEq)]
-    pub struct SparseHashSet<T: Hash + Eq> {
-        dom: Vec<T>,
-        map: HashMap<T, usize>,
-        len: usize,
-    }
-
-    impl<T: Clone + Hash + Eq> SparseHashSet<T> {
-        pub fn new(elements: impl IntoIterator<Item = T>) -> Self {
-            let dom = elements.into_iter().collect::<Vec<T>>();
-            let len = dom.len();
-            let map = dom
-                .iter()
-                .cloned()
-                .enumerate()
-                .map(|(i, x)| (x, i))
-                .collect::<HashMap<T, usize>>();
-            Self { dom, map, len }
-        }
-    }
-
-    impl<T: Hash + Eq + fmt::Debug> fmt::Debug for SparseHashSet<T> {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.debug_set().entries(self.dom[0..self.len].iter()).finish()
-        }
-    }
-
-    impl<T: Hash + Eq + fmt::Display> fmt::Display for SparseHashSet<T> {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            write!(
-                f,
-                "{{{}}}",
-                &self.dom[0..self.len]
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<String>>()
-                    .join(" "),
-            )
-        }
-    }
-
-    impl<T> Domain<T> for SparseHashSet<T>
-    where
-        T: Clone + Hash + Eq,
-    {
-        fn contains(&self, x: &T) -> bool {
-            self.map.get(x).map(|&i| i < self.len).unwrap_or(false)
-        }
-
-        fn delete(&mut self, x: &T) -> bool {
-            assert!(self.len <= self.dom.len());
-            assert_eq!(self.dom.len(), self.map.len());
-
-            let i = self.map.get(x).copied().unwrap_or(self.len);
-            if i < self.len {
-                self.len -= 1;
-                let j = self.len;
-                self.dom.swap(i, j);
-                let y = &self.dom[i];
-                *(self.map.get_mut(x).expect("missing map entry for x")) = j;
-                *(self.map.get_mut(y).expect("missing map entry for y")) = i;
-                true
-            } else {
-                false
-            }
-        }
-
-        fn deleted(&self, n: usize) -> &[T] {
-            &self.dom[self.len..n]
-        }
-
-        fn get(&self, i: usize) -> Option<&T> {
-            self.dom.get(i)
-        }
-
-        fn restore(&mut self, n: usize) -> bool {
-            assert!(self.len <= self.dom.len());
-            assert_eq!(self.dom.len(), self.map.len());
-
-            if n <= self.dom.len() {
-                self.len = n;
-                true
-            } else {
-                false
-            }
-        }
-
-        fn len(&self) -> usize {
-            self.len
-        }
-
-        fn iter(&self) -> DomainIterator<T> {
-            DomainIterator::new(self)
-        }
-    }
-
-    impl<T: Hash + Eq> Hash for SparseHashSet<T> {
-        fn hash<H: Hasher>(&self, state: &mut H) {
-            Hash::hash(&self.dom[..self.len], state)
-        }
-    }
-
-    #[test]
-    fn sparse_hash_set() {
-        #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-        struct Foo(&'static str);
-        let a = Foo("a");
-        let b = Foo("b");
-        let c = Foo("c");
-        let d = Foo("d");
-        let mut dom = SparseHashSet::new([a.clone(), b.clone(), c.clone()]);
-        assert_eq!(dom.iter().collect::<Vec<_>>(), vec![&a, &b, &c]);
-        for x in [&a, &b, &c] {
-            assert!(dom.contains(x));
-            assert!(dom.delete(x));
-            assert!(!dom.contains(x));
-        }
-        assert!(!dom.contains(&d));
-        assert!(!dom.delete(&d));
-        assert!(dom.is_empty());
-        assert!(dom.iter().next().is_none());
-        assert!(dom.restore(3));
-        assert!(!dom.restore(7));
-        assert_eq!(dom.iter().collect::<Vec<_>>(), vec![&c, &b, &a]);
     }
 }

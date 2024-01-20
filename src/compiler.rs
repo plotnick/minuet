@@ -29,7 +29,7 @@
 
 #![allow(dead_code)]
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 use gray_codes::{InclusionExclusion, SetMutation};
 
@@ -38,6 +38,8 @@ use crate::semantics::*;
 use crate::solver::*;
 use crate::syntax::*;
 use crate::tracer::*;
+
+pub use crate::solver::XccError; // re-export
 
 /// An interpretation (a set of atoms which are "true") that satisfy a program.
 pub type AnswerSet = Interpretation;
@@ -145,7 +147,6 @@ impl XccCompiler {
             .chain(secondary)
             .collect::<Items<Atom, bool>>();
 
-        let mut uniq = HashSet::<Items<Atom, bool>>::new();
         let options = program
             .iter()
             .zip(aux)
@@ -185,7 +186,8 @@ impl XccCompiler {
                     )
                     .collect::<Options<Atom, bool>>()
             })
-            .filter(|option| uniq.insert(option.clone())) // Oh, Rust!
+            .collect::<BTreeSet<Items<Atom, bool>>>()
+            .into_iter()
             .collect::<Options<Atom, bool>>();
         (items, options)
     }
@@ -343,10 +345,9 @@ mod test {
 
     #[test]
     fn trivial_0() {
-        assert!(matches!(
-            XccCompiler::new([], false),
-            Err(XccError::NoOptions)
-        ));
+        let xcc = XccCompiler::new([], false).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{}]);
     }
 
     #[test]

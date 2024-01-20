@@ -3,20 +3,16 @@ mod syntax;
 #[macro_use]
 mod tracer;
 
-mod builder;
 mod compiler;
 mod domain;
 mod formula;
 mod semantics;
 mod solver;
 
-use builder::XccBuilder;
-use solver::XccError;
+use compiler::{XccCompiler, XccError};
 
 fn main() -> Result<(), XccError<String, String>> {
-    let mut builder = XccBuilder::new();
-    builder.trace(true).unwrap();
-    let xcc = builder.build()?;
-    let _solutions = xcc.solve().collect::<Result<Vec<_>, _>>().unwrap();
+    let xcc = XccCompiler::new(vec![], true).unwrap();
+    let _solutions = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
     Ok(())
 }
