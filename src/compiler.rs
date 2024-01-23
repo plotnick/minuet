@@ -27,8 +27,6 @@
 //! dissertation). But we don't have those fancier checks yet.
 // TODO: fancier methods, e.g., unfounded-free checks
 
-#![allow(dead_code)]
-
 use std::collections::BTreeSet;
 
 use gray_codes::{InclusionExclusion, SetMutation};

@@ -3,8 +3,6 @@
 //! intended as auxiliary data structures in backtracking
 //! search through large (combinatorial) spaces.
 
-#![allow(dead_code)]
-
 use std::cmp::Ord;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -110,16 +108,8 @@ impl<T: Copy + Ord> SparseIntegerSet<T> {
         self.deleted(n)
     }
 
-    #[allow(dead_code)]
     pub fn first(&self) -> Option<T> {
         self.dom.first().copied()
-    }
-
-    // TODO: track minimum element across deletions
-    // to avoid this linear scan.
-    #[allow(dead_code)]
-    pub fn min(&self) -> Option<T> {
-        self.dom[0..self.len].iter().min().copied()
     }
 }
 
@@ -199,7 +189,7 @@ mod test {
             dom.iter().copied().collect::<Vec<_>>(),
             vec![0, 1, 2, 3, 4, 5, 6]
         );
-        assert_eq!(dom.min(), Some(0));
+        assert_eq!(dom.first(), Some(0));
         assert!(dom.contains(&0));
         assert!(dom.delete(&0));
         assert!(!dom.contains(&0));

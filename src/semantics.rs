@@ -4,8 +4,6 @@
 //! "ASP", etc.) These are all pre-processing steps prior to compilation into
 //! a combinatorial search problem and resolution into stable models.
 
-#![allow(dead_code)]
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -32,14 +30,6 @@ impl Program {
 
     pub fn iter(&self) -> impl Iterator<Item = &Rule> {
         self.0.iter()
-    }
-
-    pub fn into_iter(self) -> impl Iterator<Item = Rule> {
-        self.0.into_iter()
-    }
-
-    pub fn len(&self) -> usize {
-        self.0.len()
     }
 
     pub fn normalize(self) -> NormalProgram<Term> {
@@ -211,10 +201,6 @@ impl<T: Clone> NormalProgram<T> {
     pub fn into_iter(self) -> impl Iterator<Item = NormalRule<T>> {
         self.0.into_iter()
     }
-
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
 }
 
 impl Groundable for NormalProgram<Term> {
@@ -328,6 +314,7 @@ impl GroundProgram {
         self.0.iter()
     }
 
+    #[cfg(test)]
     pub fn into_iter(self) -> impl Iterator<Item = NormalRule<GroundTerm>> {
         self.0.into_iter()
     }

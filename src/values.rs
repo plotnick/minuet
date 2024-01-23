@@ -25,11 +25,6 @@ impl Values {
     fn insert(&mut self, c: Constant) {
         self.0.insert(c);
     }
-
-    #[allow(dead_code)]
-    fn len(&self) -> usize {
-        self.0.len()
-    }
 }
 
 impl Extend<Constant> for Values {

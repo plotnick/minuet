@@ -76,10 +76,6 @@ impl<T> Pool<T>
 where
     T: Ord,
 {
-    pub fn empty() -> Self {
-        Self::Set(BTreeSet::new())
-    }
-
     pub fn interval(x: impl Into<T>, y: impl Into<T>) -> Self {
         Self::Interval(Box::new(x.into()), Box::new(y.into()))
     }
