@@ -67,26 +67,32 @@ impl fmt::Display for Constant {
 /// Denotes an interval or arbitrary set of constants.
 /// See the `image` module for operations on such sets.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub enum Pool {
-    Interval(Box<Term>, Box<Term>),
-    Set(BTreeSet<Term>),
+pub enum Pool<T> {
+    Interval(Box<T>, Box<T>),
+    Set(BTreeSet<T>),
 }
 
-impl Pool {
+impl<T> Pool<T>
+where
+    T: Ord,
+{
     pub fn empty() -> Self {
         Self::Set(BTreeSet::new())
     }
 
-    pub fn interval(x: impl Into<Term>, y: impl Into<Term>) -> Self {
+    pub fn interval(x: impl Into<T>, y: impl Into<T>) -> Self {
         Self::Interval(Box::new(x.into()), Box::new(y.into()))
     }
 
-    pub fn set(elements: impl IntoIterator<Item = Term>) -> Self {
+    pub fn set(elements: impl IntoIterator<Item = T>) -> Self {
         Self::Set(elements.into_iter().collect())
     }
 }
 
-impl fmt::Display for Pool {
+impl<T> fmt::Display for Pool<T>
+where
+    T: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Interval(i, j) => f.write_fmt(format_args!("{i}..{j}")),
@@ -198,7 +204,7 @@ impl fmt::Display for BinOp {
 pub enum Term {
     Constant(Constant),
     Variable(Symbol),
-    Choice(Pool),
+    Choice(Pool<Term>),
     UnaryOperation(UnaryOp, Box<Term>),
     BinaryOperation(Box<Term>, BinOp, Box<Term>),
 }
@@ -237,16 +243,58 @@ impl fmt::Display for Term {
     }
 }
 
+/// Ground (variable-free) element that represents a fixed set of values.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum GroundTerm {
+    Constant(Constant),
+    Choice(Pool<GroundTerm>),
+    UnaryOperation(UnaryOp, Box<GroundTerm>),
+    BinaryOperation(Box<GroundTerm>, BinOp, Box<GroundTerm>),
+}
+
+impl GroundTerm {
+    /// Boxing constructor.
+    pub fn unary_operation(op: UnaryOp, x: GroundTerm) -> Self {
+        Self::UnaryOperation(op, Box::new(x))
+    }
+
+    /// Boxing constructor.
+    pub fn binary_operation(x: GroundTerm, op: BinOp, y: GroundTerm) -> Self {
+        Self::BinaryOperation(Box::new(x), op, Box::new(y))
+    }
+}
+
+impl From<Constant> for GroundTerm {
+    fn from(c: Constant) -> Self {
+        Self::Constant(c)
+    }
+}
+
+impl fmt::Display for GroundTerm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use GroundTerm::*;
+        use UnaryOp::*;
+        match self {
+            Constant(x) => x.fmt(f),
+            Choice(x) => x.fmt(f),
+            UnaryOperation(Abs, x) => f.write_fmt(format_args!("|{x}|")),
+            UnaryOperation(Neg, x) => f.write_fmt(format_args!("-{x}")),
+            UnaryOperation(Not, x) => f.write_fmt(format_args!("~{x}")),
+            BinaryOperation(x, op, y) => f.write_fmt(format_args!("{x} {op} {y}")),
+        }
+    }
+}
+
 /// An atomic formula is a predicate (_n_-ary relation) applied to
 /// a tuple of terms. If _n_ = 0, we may elide the argument tuple.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct Atom {
+pub struct Atom<T> {
     pub predicate: Symbol,
-    pub arguments: Vec<Term>,
+    pub arguments: Vec<T>,
 }
 
-impl Atom {
-    pub fn new(predicate: Symbol, arguments: impl IntoIterator<Item = Term>) -> Self {
+impl<T> Atom<T> {
+    pub fn new(predicate: Symbol, arguments: impl IntoIterator<Item = T>) -> Self {
         Self {
             predicate,
             arguments: arguments.into_iter().collect(),
@@ -254,7 +302,10 @@ impl Atom {
     }
 }
 
-impl fmt::Display for Atom {
+impl<T> fmt::Display for Atom<T>
+where
+    T: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.arguments.is_empty() {
             self.predicate.fmt(f)
@@ -276,16 +327,16 @@ impl fmt::Display for Atom {
 /// or a boolean arithmetic relation (e.g., `1 < 2`). (See Lifschitz,
 /// "ASP" §5.8 on why triple negation is unnecessary.)
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub enum Literal {
-    Positive(Atom),
-    Negative(Atom),
-    DoubleNegative(Atom),
-    Relation(Box<Term>, RelOp, Box<Term>),
+pub enum Literal<T> {
+    Positive(Atom<T>),
+    Negative(Atom<T>),
+    DoubleNegative(Atom<T>),
+    Relation(Box<T>, RelOp, Box<T>),
 }
 
-impl Literal {
+impl<T> Literal<T> {
     /// Boxing constructor.
-    pub fn relation(x: Term, rel: RelOp, y: Term) -> Self {
+    pub fn relation(x: T, rel: RelOp, y: T) -> Self {
         Self::Relation(Box::new(x), rel, Box::new(y))
     }
 
@@ -309,7 +360,10 @@ impl Literal {
     }
 }
 
-impl fmt::Display for Literal {
+impl<T> fmt::Display for Literal<T>
+where
+    T: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Literal::*;
         match self {
@@ -321,16 +375,16 @@ impl fmt::Display for Literal {
     }
 }
 
-/// A rule has a disjunctive head and conjunctive body, either
-/// of which may be empty.
+/// A rule has a disjunctive head and conjunctive body, either of
+/// which may be empty. Literals in either may contain variables.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Rule {
-    pub head: Vec<Literal>,
-    pub body: Vec<Literal>,
+    pub head: Vec<Literal<Term>>,
+    pub body: Vec<Literal<Term>>,
 }
 
 impl Rule {
-    pub fn new(head: Vec<Literal>, body: Vec<Literal>) -> Self {
+    pub fn new(head: Vec<Literal<Term>>, body: Vec<Literal<Term>>) -> Self {
         Self { head, body }
     }
 }
@@ -476,18 +530,33 @@ pub(crate) mod test {
 
     #[test]
     fn atom() {
-        assert_eq!(atom![f], Atom::new(sym![f], vec![]));
-        assert_eq!(atom![f()], Atom::new(sym![f], vec![]));
-        assert_eq!(atom![f(a)], Atom::new(sym![f], vec![term![a]]));
-        assert_eq!(atom![f(a, b)], Atom::new(sym![f], vec![term![a], term![b]]));
-        assert_eq!(atom![f(a or b)], Atom::new(sym![f], vec![term![a or b]]));
-        assert_eq!(atom![f(0 or 1)], Atom::new(sym![f], vec![term![0 or 1]]));
+        assert_eq!(atom![f], Atom::<Term>::new(sym![f], vec![]));
+        assert_eq!(atom![f()], Atom::<Term>::new(sym![f], vec![]));
+        assert_eq!(atom![f(a)], Atom::<Term>::new(sym![f], vec![term![a]]));
+        assert_eq!(
+            atom![f(a, b)],
+            Atom::<Term>::new(sym![f], vec![term![a], term![b]])
+        );
+        assert_eq!(
+            atom![f(a or b)],
+            Atom::<Term>::new(sym![f], vec![term![a or b]])
+        );
+        assert_eq!(
+            atom![f(0 or 1)],
+            Atom::<Term>::new(sym![f], vec![term![0 or 1]])
+        );
         assert_eq!(
             atom![f(a or b, 0 or 1)],
-            Atom::new(sym![f], vec![term![a or b], term![0 or 1]])
+            Atom::<Term>::new(sym![f], vec![term![a or b], term![0 or 1]])
         );
-        assert_eq!(atom![f(0..1)], Atom::new(sym![f], vec![term![0..1]]));
-        assert_eq!(atom![f(X, Y)], Atom::new(sym![f], vec![term![X], term![Y]]));
+        assert_eq!(
+            atom![f(0..1)],
+            Atom::<Term>::new(sym![f], vec![term![0..1]])
+        );
+        assert_eq!(
+            atom![f(X, Y)],
+            Atom::<Term>::new(sym![f], vec![term![X], term![Y]])
+        );
     }
 
     macro_rules! lit {
@@ -509,10 +578,13 @@ pub(crate) mod test {
     #[test]
     fn literal() {
         use Literal::*;
-        assert_eq!(lit![p], Positive(atom![p]));
-        assert_eq!(lit![p(a, b)], Positive(atom![p(a, b)]));
-        assert_eq!(lit![not p(a, b)], Negative(atom![p(a, b)]));
-        assert_eq!(lit![not not p(a, b)], DoubleNegative(atom![p(a, b)]));
+        assert_eq!(lit![p], Positive::<Term>(atom![p]));
+        assert_eq!(lit![p(a, b)], Positive::<Term>(atom![p(a, b)]));
+        assert_eq!(lit![not p(a, b)], Negative::<Term>(atom![p(a, b)]));
+        assert_eq!(
+            lit![not not p(a, b)],
+            DoubleNegative::<Term>(atom![p(a, b)])
+        );
     }
 
     #[test]

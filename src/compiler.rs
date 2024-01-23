@@ -45,7 +45,7 @@ pub use crate::solver::XccError; // re-export
 pub type AnswerSet = Model;
 
 /// Searching for an answer set may fail.
-pub type AnswerResult = Result<AnswerSet, XccError<Atom, bool>>;
+pub type AnswerResult = Result<AnswerSet, XccError<Atom<GroundTerm>, bool>>;
 
 pub fn format_answer(answer: &AnswerSet) -> String {
     format!(
@@ -60,7 +60,7 @@ pub fn format_answer(answer: &AnswerSet) -> String {
 
 pub struct XccCompiler {
     program: CompleteProgram,
-    solver: DancingCells<Atom, bool>,
+    solver: DancingCells<Atom<GroundTerm>, bool>,
     trace: Trace,
 }
 
@@ -68,11 +68,11 @@ impl XccCompiler {
     pub fn new(
         rules: impl IntoIterator<Item = Rule>,
         trace: Trace,
-    ) -> Result<Self, XccError<Atom, bool>> {
+    ) -> Result<Self, XccError<Atom<GroundTerm>, bool>> {
         let program = Program::new(rules);
         trace!(trace, "Preparing program:\n{}", program);
 
-        let program = program.normalize().ground().complete();
+        let program = program.normalize().ground_new().complete();
         trace!(trace, "Compiling program:\n{}", program);
 
         let (items, options) = Self::compile(&program, trace);
@@ -101,7 +101,10 @@ impl XccCompiler {
     fn compile(
         program: &CompleteProgram,
         trace: Trace,
-    ) -> (Items<Atom, bool>, Options<Atom, bool>) {
+    ) -> (
+        Items<Atom<GroundTerm>, bool>,
+        Options<Atom<GroundTerm>, bool>,
+    ) {
         let mut atoms = Interpretation::new();
         program.atoms(&mut atoms);
         let aux = (0..program.len())
@@ -120,55 +123,55 @@ impl XccCompiler {
             .cloned()
             .map(Item::Primary)
             .chain(secondary)
-            .collect::<Items<Atom, bool>>();
+            .collect::<Items<Atom<GroundTerm>, bool>>();
 
-        let options = program
-            .iter()
-            .zip(aux)
-            .flat_map(|(rule, aux)| {
-                // Encode rule-local models as XCC options. Secondary items (non-aux atoms) are
-                // colored with their truth values (inclusion/exlusion) in the interpretation.
-                let mut atoms = Interpretation::new();
-                rule.atoms(&mut atoms);
-                let atoms = atoms.into_iter().collect::<Vec<Atom>>();
+        let options =
+            program
+                .iter()
+                .zip(aux)
+                .flat_map(|(rule, aux)| {
+                    // Encode rule-local models as XCC options. Secondary items (non-aux atoms) are
+                    // colored with their truth values (inclusion/exlusion) in the interpretation.
+                    let mut atoms = Interpretation::new();
+                    rule.atoms(&mut atoms);
+                    let atoms = atoms.into_iter().collect::<Vec<Atom<GroundTerm>>>();
 
-                // Look for local models by trying all possible interpretations
-                // over the rule's atoms (via Gray codes), including the empty set.
-                let mut interp = Interpretation::new();
-                let maybe_make_option = |interp: &Interpretation| -> Option<Items<Atom, bool>> {
-                    rule.eval(interp).then(|| {
-                        [Item::Primary(aux.clone())]
+                    // Look for local models by trying all possible interpretations
+                    // over the rule's atoms (via Gray codes), including the empty set.
+                    let mut interp = Interpretation::new();
+                    let maybe_make_option =
+                        |interp: &Interpretation| -> Option<Items<Atom<GroundTerm>, bool>> {
+                            rule.eval(interp).then(|| {
+                                [Item::Primary(aux.clone())]
+                                    .into_iter()
+                                    .chain(atoms.iter().map(|a| {
+                                        Item::Secondary(a.clone(), Some(interp.contains(a)))
+                                    }))
+                                    .collect()
+                            })
+                        };
+                    if atoms.is_empty() {
+                        maybe_make_option(&interp)
+                            .into_iter()
+                            .collect::<Options<Atom<GroundTerm>, bool>>()
+                    } else {
+                        maybe_make_option(&interp)
                             .into_iter()
                             .chain(
-                                atoms
-                                    .iter()
-                                    .map(|a| Item::Secondary(a.clone(), Some(interp.contains(a)))),
+                                InclusionExclusion::of_len(atoms.len()).filter_map(|mutation| {
+                                    match mutation {
+                                        SetMutation::Insert(i) => interp.insert(atoms[i].clone()),
+                                        SetMutation::Remove(i) => interp.remove(&atoms[i]),
+                                    };
+                                    maybe_make_option(&interp)
+                                }),
                             )
-                            .collect()
-                    })
-                };
-                if atoms.is_empty() {
-                    maybe_make_option(&interp)
-                        .into_iter()
-                        .collect::<Options<Atom, bool>>()
-                } else {
-                    maybe_make_option(&interp)
-                        .into_iter()
-                        .chain(
-                            InclusionExclusion::of_len(atoms.len()).filter_map(|mutation| {
-                                match mutation {
-                                    SetMutation::Insert(i) => interp.insert(atoms[i].clone()),
-                                    SetMutation::Remove(i) => interp.remove(&atoms[i]),
-                                };
-                                maybe_make_option(&interp)
-                            }),
-                        )
-                        .collect::<Options<Atom, bool>>()
-                }
-            })
-            .collect::<BTreeSet<Items<Atom, bool>>>()
-            .into_iter()
-            .collect::<Options<Atom, bool>>();
+                            .collect::<Options<Atom<GroundTerm>, bool>>()
+                    }
+                })
+                .collect::<BTreeSet<Items<Atom<GroundTerm>, bool>>>()
+                .into_iter()
+                .collect::<Options<Atom<GroundTerm>, bool>>();
 
         trace!(
             trace,
@@ -203,7 +206,7 @@ impl XccCompiler {
         program: CompleteProgram,
         model: &Model,
         trace: Trace,
-    ) -> Result<bool, XccError<Atom, bool>> {
+    ) -> Result<bool, XccError<Atom<GroundTerm>, bool>> {
         let reduct = program.reduce(model);
         trace!(trace, "Reduct w/r/t {}:\n{}", format_answer(model), reduct);
         assert!(reduct.is_definite(), "reducts are definite by definition");
@@ -239,8 +242,8 @@ impl XccCompiler {
 /// first two to ensure we yield an answer just once.
 pub enum Answer<'a> {
     TrivialModel(Option<AnswerSet>),
-    UniqueModel(Option<DanceStep<'a, Atom, bool>>),
-    StableModels(DanceStep<'a, Atom, bool>),
+    UniqueModel(Option<DanceStep<'a, Atom<GroundTerm>, bool>>),
+    StableModels(DanceStep<'a, Atom<GroundTerm>, bool>),
 }
 
 pub struct AnswerStep<'a> {
@@ -252,7 +255,7 @@ pub struct AnswerStep<'a> {
 impl<'a> AnswerStep<'a> {
     pub fn new(
         program: &'a CompleteProgram,
-        step: DanceStep<'a, Atom, bool>,
+        step: DanceStep<'a, Atom<GroundTerm>, bool>,
         trace: Trace,
     ) -> Self {
         Self {
@@ -269,7 +272,7 @@ impl<'a> AnswerStep<'a> {
     }
 
     /// Construct a model of the program from a solution of the XCC problem.
-    fn answer(program: &CompleteProgram, solution: Options<Atom, bool>) -> AnswerSet {
+    fn answer(program: &CompleteProgram, solution: Options<Atom<GroundTerm>, bool>) -> AnswerSet {
         let mut answer = AnswerSet::new();
         for option in solution {
             for item in option {
@@ -296,7 +299,7 @@ impl<'a> Iterator for AnswerStep<'a> {
             Answer::UniqueModel(ref mut step) => step.take().and_then(|step| {
                 match step
                     .map(|r| r.map(|s| Self::answer(self.program, s)))
-                    .collect::<Result<Vec<AnswerSet>, XccError<Atom, bool>>>()
+                    .collect::<Result<Vec<AnswerSet>, XccError<Atom<GroundTerm>, bool>>>()
                 {
                     Err(error) => Some(Err(error)),
                     Ok(answers) if answers.is_empty() => None,
@@ -337,7 +340,7 @@ mod test {
 
     macro_rules! answer_set {
         {$($head:ident$(($($arg:tt),*))?),*} => {
-            [$(atom![$head$(($($arg),*))?]),*]
+            [$(atom![$head$(($($arg),*))?].ground_new()),*]
                 .into_iter()
                 .collect::<AnswerSet>()
         }

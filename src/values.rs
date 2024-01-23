@@ -10,7 +10,6 @@ use std::collections::btree_set::{self, BTreeSet};
 use std::iter::FromIterator;
 use std::ops;
 
-use crate::formula::Formula;
 use crate::generate::combinations_mixed;
 use crate::syntax::*;
 
@@ -71,12 +70,8 @@ impl Image for Constant {
     }
 }
 
-impl Image for Pool {
+impl Image for Pool<GroundTerm> {
     fn image(&self) -> Values {
-        if !self.is_ground() {
-            return Values::new();
-        }
-
         use Pool::*;
         match self {
             Interval(i, j) => {
@@ -101,16 +96,11 @@ impl Image for Values {
     }
 }
 
-impl Image for Term {
+impl Image for GroundTerm {
     fn image(&self) -> Values {
-        if !self.is_ground() {
-            return Values::new();
-        }
-
-        use Term::*;
+        use GroundTerm::*;
         match self {
             Constant(c) => [c].into_iter().cloned().collect(),
-            Variable(v) => unimplemented!("term must be ground, got variable {v}"),
             Choice(p) => p.image(),
             UnaryOperation(op, x) => {
                 use UnaryOp::*;
@@ -144,13 +134,13 @@ pub trait IntoImage {
         Self: Sized;
 }
 
-impl IntoImage for Term {
+impl IntoImage for GroundTerm {
     fn into_image(self) -> Vec<Self> {
         self.image().into_iter().map(Self::Constant).collect()
     }
 }
 
-impl IntoImage for Atom {
+impl IntoImage for Atom<GroundTerm> {
     fn into_image(self) -> Vec<Self> {
         let Atom {
             predicate,
@@ -164,7 +154,7 @@ impl IntoImage for Atom {
     }
 }
 
-impl IntoImage for Literal {
+impl IntoImage for Literal<GroundTerm> {
     /// Expand intervals & choices in a literal.
     fn into_image(self) -> Vec<Self> {
         use Literal::*;
@@ -429,6 +419,29 @@ impl Constant {
 mod test {
     use super::*;
 
+    use crate::formula::Groundable as _;
+
+    macro_rules! ground {
+        ($term:expr) => {
+            $term.ground_new()
+        };
+    }
+
+    macro_rules! ground_all {
+        ($($term:expr),* $(,)?) => { vec![$(ground!($term)),*] };
+    }
+
+    macro_rules! image {
+        ($term:expr) => {
+            ground!($term).image()
+        };
+    }
+    macro_rules! image_atoms {
+        ($term:expr) => {
+            ground!($term).into_image()
+        };
+    }
+
     macro_rules! values {
         [$($val:tt),*] => {
             Values::from_iter([$(constant![$val]),*])
@@ -437,13 +450,13 @@ mod test {
 
     macro_rules! assert_image {
         ($term:expr, $image:expr) => {
-            assert_eq!($term.image(), $image);
+            assert_eq!(image!($term), $image);
         };
     }
 
     macro_rules! assert_image_eq {
         ($term:expr, $other:expr) => {
-            assert_eq!($term.image(), $other.image());
+            assert_eq!(image!($term), image!($other));
         };
     }
 
@@ -563,14 +576,17 @@ mod test {
 
     #[test]
     fn atomic_image() {
-        assert_eq!(atom![p].into_image(), vec![atom![p]]);
-        assert_eq!(atom![p(1)].into_image(), vec![atom![p(1)]]);
-        assert_eq!(atom![p(1..1)].into_image(), vec![atom![p(1)]]);
-        assert_eq!(atom![p(1..2)].into_image(), vec![atom![p(1)], atom![p(2)]]);
-        assert_eq!(atom![p(1, 2)].into_image(), vec![atom![p(1, 2)]]);
+        assert_eq!(image_atoms!(atom![p]), ground_all![atom![p]]);
+        assert_eq!(image_atoms!(atom![p(1)]), ground_all![atom![p(1)]]);
+        assert_eq!(image_atoms!(atom![p(1..1)]), ground_all![atom![p(1)]]);
         assert_eq!(
-            atom![p(1..2, 2..3)].into_image(),
-            vec![
+            image_atoms!(atom![p(1..2)]),
+            ground_all![atom![p(1)], atom![p(2)]]
+        );
+        assert_eq!(image_atoms!(atom![p(1, 2)]), ground_all![atom![p(1, 2)]]);
+        assert_eq!(
+            image_atoms!(atom![p(1..2, 2..3)]),
+            ground_all![
                 atom![p(1, 2)],
                 atom![p(1, 3)],
                 atom![p(2, 2)],
@@ -578,8 +594,8 @@ mod test {
             ]
         );
         assert_eq!(
-            atom![p(1..2, 2..3, 3..4)].into_image(),
-            vec![
+            image_atoms!(atom![p(1..2, 2..3, 3..4)]),
+            ground_all![
                 atom![p(1, 2, 3)],
                 atom![p(1, 2, 4)],
                 atom![p(1, 3, 3)],
