@@ -3,7 +3,8 @@
 //! See "Abstract Gringo" (2015) by Gebser, et al. and the
 //! "ASP-Core-2 Input Language Format" (2012). A string or
 //! macro parser may layer whatever surface syntax it likes
-//! on top of these elements; see the example in [`test`].
+//! on top of these elements; see the example in the `test`
+//! module.
 
 #![allow(dead_code)]
 
@@ -24,6 +25,12 @@ impl Symbol {
     }
 }
 
+impl From<&str> for Symbol {
+    fn from(s: &str) -> Self {
+        Symbol::new(String::from(s))
+    }
+}
+
 impl fmt::Display for Symbol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.name())
@@ -39,7 +46,7 @@ pub enum Constant {
 
 impl From<&str> for Constant {
     fn from(s: &str) -> Self {
-        Self::Name(Symbol::new(String::from(s)))
+        Self::Name(Symbol::from(s))
     }
 }
 
@@ -64,8 +71,7 @@ impl fmt::Display for Constant {
     }
 }
 
-/// Denotes an interval or arbitrary set of constants.
-/// See the `image` module for operations on such sets.
+/// An interval or arbitrary set of values.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Pool<T> {
     Interval(Box<T>, Box<T>),
@@ -116,6 +122,21 @@ pub enum RelOp {
 }
 
 impl RelOp {
+    pub fn eval<T>(&self, x: T, y: T) -> bool
+    where
+        T: Eq + Ord,
+    {
+        use RelOp::*;
+        match self {
+            Eq => x == y,
+            Ne => x != y,
+            Lt => x < y,
+            Gt => x > y,
+            Leq => x <= y,
+            Geq => x >= y,
+        }
+    }
+
     pub fn negate(self) -> Self {
         use RelOp::*;
         match self {
@@ -281,35 +302,69 @@ impl fmt::Display for GroundTerm {
     }
 }
 
-/// An atomic formula is a predicate (_n_-ary relation) applied to
-/// a tuple of terms. If _n_ = 0, we may elide the argument tuple.
+/// An _auxiliary atom_ is used to represent a rule's truth value.
+/// Each auxiliary is given a prefix (for debugging) and a unique
+/// (within a program) integer tag.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct Atom<T> {
-    pub predicate: Symbol,
-    pub arguments: Vec<T>,
+pub struct Auxiliary {
+    pub prefix: Symbol,
+    pub number: usize,
 }
 
-impl<T> Atom<T> {
-    pub fn new(predicate: Symbol, arguments: impl IntoIterator<Item = T>) -> Self {
-        Self {
-            predicate,
-            arguments: arguments.into_iter().collect(),
-        }
+impl fmt::Display for Auxiliary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Auxiliary { prefix, number } = self;
+        f.write_fmt(format_args!("{prefix}_{number}"))
     }
 }
 
-impl<T> fmt::Display for Atom<T>
+/// An _aggregate atom_ represents all possible subsets of some set of values.
+/// TODO: Cardinality bounds.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct Aggregate<T> {
+    pub choices: Vec<Literal<T>>,
+}
+
+impl<T> fmt::Display for Aggregate<T>
 where
     T: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.arguments.is_empty() {
-            self.predicate.fmt(f)
+        f.write_fmt(format_args!(
+            "{{{}}}",
+            self.choices
+                .iter()
+                .map(|l| l.to_string())
+                .collect::<Vec<_>>()
+                .join(" or ")
+        ))
+    }
+}
+
+/// An _n_-ary predicate applied to a tuple of terms.
+/// If _n_ = 0, the arguments are usually elided.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct Application<T> {
+    pub predicate: Symbol,
+    pub arguments: Vec<T>,
+}
+
+impl<T> fmt::Display for Application<T>
+where
+    T: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Application {
+            predicate,
+            arguments,
+        } = self;
+        if arguments.is_empty() {
+            predicate.fmt(f)
         } else {
             f.write_fmt(format_args!(
                 "{}({})",
-                self.predicate,
-                self.arguments
+                predicate,
+                arguments
                     .iter()
                     .map(|arg| arg.to_string())
                     .collect::<Vec<_>>()
@@ -319,9 +374,58 @@ where
     }
 }
 
+/// An _atomic formula_ contains no logical connectives (i.e., `and`, `or`, `not`).
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum Atom<T> {
+    /// An auxiliary representing a rule.
+    Aux(Auxiliary),
+
+    /// All possible subsets of a set of values.
+    Agg(Aggregate<T>),
+
+    /// A predicate applied to a set of values.
+    App(Application<T>),
+}
+
+impl<T> Atom<T>
+where
+    T: Clone,
+{
+    pub fn aux(prefix: Symbol, number: usize) -> Self {
+        Self::Aux(Auxiliary { prefix, number })
+    }
+
+    pub fn agg(atoms: impl IntoIterator<Item = Literal<T>>) -> Self {
+        Self::Agg(Aggregate {
+            choices: atoms.into_iter().collect(),
+        })
+    }
+
+    pub fn app(predicate: Symbol, arguments: impl IntoIterator<Item = T>) -> Self {
+        Self::App(Application {
+            predicate,
+            arguments: arguments.into_iter().collect(),
+        })
+    }
+}
+
+impl<T> fmt::Display for Atom<T>
+where
+    T: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use Atom::*;
+        match self {
+            Aux(aux) => aux.fmt(f),
+            Agg(agg) => agg.fmt(f),
+            App(app) => app.fmt(f),
+        }
+    }
+}
+
 /// An atomic formula, its single or double negation as failure,
-/// or a boolean arithmetic relation (e.g., `1 < 2`). (See Lifschitz,
-/// "ASP" §5.8 on why triple negation is unnecessary.)
+/// or a boolean arithmetic relation (e.g., `1 < 2`). See Lifschitz,
+/// "ASP" §5.8 for why triple negation is unnecessary.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Literal<T> {
     Positive(Atom<T>),
@@ -348,7 +452,7 @@ impl<T> Literal<T> {
     }
 
     pub fn is_positive(&self) -> bool {
-        matches!(self, Literal::Positive(..))
+        matches!(self, Self::Positive(..))
     }
 
     pub fn is_negative(&self) -> bool {
@@ -371,21 +475,91 @@ where
     }
 }
 
-/// A rule has a disjunctive head and conjunctive body, either of
-/// which may be empty. Literals in either may contain variables.
+/// Prior to preprocessing, rules come in two basic flavors: _choice_ and
+/// _disjunctive_. The head of a choice rule like `{a; b; c}` denotes all
+/// possible ways of choosing which of the atoms `a`, `b`, and `c` are
+/// included in the model. The head of a disjunctive rule like `a or b or c`
+/// instead means that any of the three atoms `a`, `b`, or `c` may be in
+/// the model.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Rule {
-    pub head: Vec<Literal<Term>>,
-    pub body: Vec<Literal<Term>>,
+pub enum BaseRule<T> {
+    Choice(ChoiceRule<T>),
+    Disjunctive(Rule<T>),
 }
 
-impl Rule {
-    pub fn new(head: Vec<Literal<Term>>, body: Vec<Literal<Term>>) -> Self {
-        Self { head, body }
+impl<T> fmt::Display for BaseRule<T>
+where
+    T: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Choice(rule) => rule.fmt(f),
+            Self::Disjunctive(rule) => rule.fmt(f),
+        }
     }
 }
 
-impl fmt::Display for Rule {
+/// A choice rule has a single aggregate atom as its head.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChoiceRule<T> {
+    pub head: Aggregate<T>,
+    pub body: Vec<Literal<T>>,
+}
+
+impl<T> ChoiceRule<T> {
+    pub fn new(head: Aggregate<T>, body: impl IntoIterator<Item = Literal<T>>) -> Self {
+        Self {
+            head,
+            body: body.into_iter().collect(),
+        }
+    }
+}
+
+impl<T> fmt::Display for ChoiceRule<T>
+where
+    T: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.body.is_empty() {
+            self.head.fmt(f)
+        } else {
+            f.write_fmt(format_args!(
+                "{} if {}",
+                self.head,
+                self.body
+                    .iter()
+                    .map(|b| b.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" and ")
+            ))
+        }
+    }
+}
+
+/// Rules generally have a disjunctive head and a conjunctive body,
+/// but at this level we'll just collect vectors.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rule<T> {
+    pub head: Vec<Literal<T>>,
+    pub body: Vec<Literal<T>>,
+}
+
+impl<T> Rule<T> {
+    pub fn new(
+        head: impl IntoIterator<Item = Literal<T>>,
+        body: impl IntoIterator<Item = Literal<T>>,
+    ) -> Self {
+        Self {
+            head: head.into_iter().collect(),
+            body: body.into_iter().collect(),
+        }
+    }
+}
+
+impl<T> fmt::Display for Rule<T>
+where
+    T: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let head = || -> String {
             self.head
@@ -424,9 +598,12 @@ pub(crate) mod test {
     #[test]
     fn symbol() {
         assert_eq!(sym![a], Symbol::new(String::from("a")));
+        assert_eq!(sym![a], sym![a]);
+        assert_ne!(sym![a], sym![b]);
     }
 
     macro_rules! constant {
+        [($($c:tt)*)] => { constant![$($c)*] };
         [$s:ident] => { Constant::Name(sym![$s]) };
         [$i:literal] => { Constant::Number($i) };
         [-$i:literal] => { Constant::Number(-$i) };
@@ -436,14 +613,19 @@ pub(crate) mod test {
     fn constant() {
         assert_eq!(constant![a], Constant::Name(sym![a]));
         assert_eq!(constant![0], Constant::Number(0));
+        assert_eq!(constant![a], "a".into());
+        assert_eq!(constant![0], 0.into());
+        assert_eq!(constant![-1], (-1).into());
+        assert_ne!(constant![-1], 1.into());
     }
 
     macro_rules! term {
         [($($term:tt)*)] => { term![$($term)*] };
         [|($($term:tt)*)|] => { Term::unary_operation(UnaryOp::Abs, term![$($term)*]) };
         [|$a:tt|] => { Term::unary_operation(UnaryOp::Abs, term![$a]) };
-        [- $a:tt] => { Term::unary_operation(UnaryOp::Neg, term![$a]) };
-        [~ $a:tt] => { Term::unary_operation(UnaryOp::Not, term![$a]) };
+        [-$a:literal] => { Term::Constant(Constant::Number(-$a)) };
+        [-$a:tt] => { Term::unary_operation(UnaryOp::Neg, term![$a]) };
+        [~$a:tt] => { Term::unary_operation(UnaryOp::Not, term![$a]) };
         [$a:tt + $b:tt] => { Term::binary_operation(term![$a], BinOp::Add, term![$b]) };
         [$a:tt - $b:tt] => { Term::binary_operation(term![$a], BinOp::Sub, term![$b]) };
         [$a:tt * $b:tt] => { Term::binary_operation(term![$a], BinOp::Mul, term![$b]) };
@@ -452,7 +634,7 @@ pub(crate) mod test {
         [$a:tt % $b:tt] => { Term::binary_operation(term![$a], BinOp::Rem, term![$b]) };
         [$a:tt $(or $b:tt)+] => { Term::Choice(Pool::set([term![$a], $(term![$b]),+])) };
         [$i:tt..$j:tt] => { Term::Choice(Pool::interval(term![$i], term![$j])) };
-        [$i:literal] => { Term::Constant(Constant::Number($i)) };
+        [$a:literal] => { Term::Constant(Constant::Number($a)) };
         [$s:ident] => {
             // Prolog/ASP surface syntax: names of constants start with a lowercase
             // letter, and the names of variables start with an uppercase letter or
@@ -473,7 +655,8 @@ pub(crate) mod test {
         );
         assert_eq!(term![X], Term::Variable(Symbol::new(String::from("X"))));
         assert_eq!(term![1], Term::Constant(Constant::Number(1)));
-        assert_eq!(term![-1], Term::unary_operation(UnaryOp::Neg, term![1]));
+        assert_eq!(term![-1], Term::Constant(Constant::Number(-1)));
+        assert_eq!(term![-X], Term::unary_operation(UnaryOp::Neg, term![X]));
         assert_eq!(
             term![|(-3)|],
             Term::unary_operation(UnaryOp::Abs, term![-3])
@@ -481,6 +664,10 @@ pub(crate) mod test {
         assert_eq!(
             term![1..3],
             Term::Choice(Pool::interval(term![1], term![3]))
+        );
+        assert_eq!(
+            term![1..N],
+            Term::Choice(Pool::interval(term![1], term![N]))
         );
         assert_eq!(
             term![1 or 2 or 3],
@@ -520,43 +707,109 @@ pub(crate) mod test {
             atom![@args [$($rest)*] [$i $($partial)*] -> [$($args)*]]
         };
 
-        [$pred:ident($($args:tt)*)] => { Atom::new(sym![$pred], atom![@args [$($args)*] [] -> []]) };
-        [$pred:ident] => { Atom::new(sym![$pred], vec![]) };
+        // And another to delimit disjuncts in choice rules.
+        // It would be nice if this could share code with lit!
+        [@agg [] [] -> [$($agg:tt)*]] => {{
+            let mut v = vec![$($agg)*]; v.reverse(); v
+        }};
+        [@agg [] [$($partial:tt)*] -> [$($agg:tt)*]] => {
+            atom![@agg [] [] -> [Literal::Positive(atom![$($partial)*]), $($agg)*]]
+        };
+        [@agg [not not $($rest:tt)*] [] -> [$($agg:tt)*]] => {
+            atom![@agg [$($rest)*] [not not] -> [$($agg)*]]
+        };
+        [@agg [not $($rest:tt)*] [] -> [$($agg:tt)*]] => {
+            atom![@agg [$($rest)*] [not] -> [$($agg)*]]
+        };
+        [@agg [or $($rest:tt)*] [] -> [$($agg:tt)*]] => {
+            atom![@agg [$($rest)*] [] -> [$($agg)*]]
+        };
+        [@agg [or $($rest:tt)*] [not not $($partial:tt)*] -> [$($agg:tt)*]] => {
+            atom![@agg [$($rest)*] [] -> [Literal::DoubleNegative(atom![$($partial)*]), $($agg)*]]
+        };
+        [@agg [or $($rest:tt)*] [not $($partial:tt)*] -> [$($agg:tt)*]] => {
+            atom![@agg [$($rest)*] [] -> [Literal::Negative(atom![$($partial)*]), $($agg)*]]
+        };
+        [@agg [or $($rest:tt)*] [$($partial:tt)*] -> [$($agg:tt)*]] => {
+            atom![@agg [$($rest)*] [] -> [Literal::Positive(atom![$($partial)*]), $($agg)*]]
+        };
+        [@agg [$pred:ident($($args:tt)*) $($rest:tt)*] [not not] -> [$($agg:tt)*]] => {
+            atom![@agg [$($rest)*] [] -> [Literal::DoubleNegative(atom![$pred($($args)*)]), $($agg)*]]
+        };
+        [@agg [$pred:ident $($rest:tt)*] [not not] -> [$($agg:tt)*]] => {
+            atom![@agg [$($rest)*] [not not $pred] -> [$($agg)*]]
+        };
+        [@agg [$pred:ident($($args:tt)*) $($rest:tt)*] [not] -> [$($agg:tt)*]] => {
+            atom![@agg [$($rest)*] [not $pred($($args)*)] -> [$($agg)*]]
+        };
+        [@agg [$pred:ident $($rest:tt)*] [not] -> [$($agg:tt)*]] => {
+            atom![@agg [$($rest)*] [not $pred] -> [$($agg)*]]
+        };
+        [@agg [$pred:ident($($args:tt)*) $($rest:tt)*] [] -> [$($agg:tt)*]] => {
+            atom![@agg [$($rest)*] [$pred($($args)*)] -> [$($agg)*]]
+        };
+        [@agg [$pred:ident $($rest:tt)*] [] -> [$($agg:tt)*]] => {
+            atom![@agg [$($rest)*] [$pred] -> [$($agg)*]]
+        };
+
+        [{$($agg:tt)*}] => { Atom::<Term>::agg(atom![@agg [$($agg)*] [] -> []]) };
+        [$pred:ident($($args:tt)*)] => { Atom::<Term>::app(sym![$pred], atom![@args [$($args)*] [] -> []]) };
+        [$pred:ident] => { Atom::<Term>::app(sym![$pred], vec![]) };
     }
 
     #[test]
     fn atom() {
-        assert_eq!(atom![f], Atom::<Term>::new(sym![f], vec![]));
-        assert_eq!(atom![f()], Atom::<Term>::new(sym![f], vec![]));
-        assert_eq!(atom![f(a)], Atom::<Term>::new(sym![f], vec![term![a]]));
+        assert_eq!(atom![f], Atom::<Term>::app(sym![f], vec![]));
+        assert_eq!(atom![f()], Atom::<Term>::app(sym![f], vec![]));
+        assert_eq!(atom![f(a)], Atom::<Term>::app(sym![f], vec![term![a]]));
         assert_eq!(
             atom![f(a, b)],
-            Atom::<Term>::new(sym![f], vec![term![a], term![b]])
+            Atom::<Term>::app(sym![f], vec![term![a], term![b]])
         );
         assert_eq!(
             atom![f(a or b)],
-            Atom::<Term>::new(sym![f], vec![term![a or b]])
+            Atom::<Term>::app(sym![f], vec![term![a or b]])
         );
         assert_eq!(
             atom![f(0 or 1)],
-            Atom::<Term>::new(sym![f], vec![term![0 or 1]])
+            Atom::<Term>::app(sym![f], vec![term![0 or 1]])
         );
         assert_eq!(
             atom![f(a or b, 0 or 1)],
-            Atom::<Term>::new(sym![f], vec![term![a or b], term![0 or 1]])
+            Atom::<Term>::app(sym![f], vec![term![a or b], term![0 or 1]])
         );
         assert_eq!(
             atom![f(0..1)],
-            Atom::<Term>::new(sym![f], vec![term![0..1]])
+            Atom::<Term>::app(sym![f], vec![term![0..1]])
         );
         assert_eq!(
             atom![f(X, Y)],
-            Atom::<Term>::new(sym![f], vec![term![X], term![Y]])
+            Atom::<Term>::app(sym![f], vec![term![X], term![Y]])
+        );
+        assert_eq!(
+            atom![{ p }],
+            Atom::<Term>::agg([Literal::Positive(atom![p]),]),
+        );
+        assert_eq!(
+            atom![{f(a) or f(b)}],
+            Atom::<Term>::agg([
+                Literal::Positive(atom![f(a)]),
+                Literal::Positive(atom![f(b)])
+            ]),
+        );
+        assert_eq!(
+            atom![{f(a) or not f(b) or not not f(c)}],
+            Atom::<Term>::agg([
+                Literal::Positive(atom![f(a)]),
+                Literal::Negative(atom![f(b)]),
+                Literal::DoubleNegative(atom![f(c)])
+            ]),
         );
     }
 
     macro_rules! lit {
         [($($lit:tt)*)] => { lit![$($lit)*] };
+        [{$($atom:tt)*}] => { Literal::Positive(atom![{$($atom)*}]) };
         [$x:tt = $y:tt] => { Literal::relation(term![$x], RelOp::Eq, term![$y]) };
         [$x:tt != $y:tt] => { Literal::relation(term![$x], RelOp::Ne, term![$y]) };
         [$x:tt < $y:tt] => { Literal::relation(term![$x], RelOp::Lt, term![$y]) };
@@ -646,8 +899,8 @@ pub(crate) mod test {
         [@head [] -> [$($head:tt)*] []] => {
             rule_aux![@body [] -> [] [$($head)*]]
         };
-        [@head [if $($rest:tt)*] -> [$($head:tt)*] []] => {
-            rule_aux![@body [$($rest)*] -> [] [$($head)*]]
+        [@head [if $($body:tt)*] -> [$($head:tt)*] []] => {
+            rule_aux![@body [$($body)*] -> [] [$($head)*]]
         };
 
         // Accumulate disjunction of head literals.
@@ -661,12 +914,29 @@ pub(crate) mod test {
             rule_aux![@lit @head [$($rest)*] -> [$($head)*] []]
         };
 
-        // Body base case: we've accumulated a whole rule.
-        // Reverse the head & body and make an instance.
+        // Choice rules have a single aggregate atom as head.
+        [@choice [{$($choice:tt)*} if $($body:tt)*] -> [] []] => {
+            rule_aux![@body [$($body)*] -> [] [{$($choice)*}]]
+        };
+        [@choice [{$($choice:tt)*}] -> [] []] => {
+            rule_aux![@body [] -> [] [{$($choice)*}]]
+        };
+
+        // Choice rule body base case.
+        [@body [] -> [$($body:tt)*] [{$($choice:tt)*}]] => {{
+            let head = match atom![{$($choice)*}] {
+                Atom::Agg(agg) => agg,
+                _ => unimplemented!("invalid choice rule"),
+            };
+            let mut body = vec![$($body)*]; body.reverse();
+            BaseRule::Choice(ChoiceRule::new(head, body))
+        }};
+
+        // Disjunctive rule body base case.
         [@body [] -> [$($body:tt)*] [$($head:tt)*]] => {{
             let mut head = vec![$($head)*]; head.reverse();
             let mut body = vec![$($body)*]; body.reverse();
-            Rule::new(head, body)
+            BaseRule::Disjunctive(Rule::new(head, body))
         }};
 
         // Accumulate conjunction of body literals and carry the head.
@@ -686,64 +956,107 @@ pub(crate) mod test {
 
     macro_rules! rule {
         // Top level: punt to auxiliary macro.
+        [{$($choice:tt)*} if $($body:tt)*] => { rule_aux![@choice [{$($choice)*} if $($body)*] -> [] []] };
+        [{$($choice:tt)*}] => { rule_aux![@choice [{$($choice)*}] -> [] []] };
         [if $($body:tt)*] => { rule_aux![@body [$($body)*] -> [] []] };
         [$($rest:tt)*] => { rule_aux![@head [$($rest)*] -> [] []] };
+    }
+
+    // Ground variants.
+    macro_rules! gatom {
+        [$($x:tt)*] => { atom![$($x)*].ground() };
+    }
+
+    macro_rules! glit {
+        [$($lit:tt)*] => { lit![$($lit)*].ground() };
     }
 
     #[test]
     fn rule() {
         // Heads with no bodies are (disjunctive) "facts".
-        assert_eq!(rule![p], Rule::new(vec![lit![p]], vec![]));
-        assert_eq!(rule![p(a)], Rule::new(vec![lit![p(a)]], vec![]));
-        assert_eq!(rule![p(a or b)], Rule::new(vec![lit![p(a or b)]], vec![]));
+        assert_eq!(
+            rule![p],
+            BaseRule::Disjunctive(Rule::<Term>::new([lit![p]], []))
+        );
+        assert_eq!(
+            rule![p(a)],
+            BaseRule::Disjunctive(Rule::new([lit![p(a)]], []))
+        );
+        assert_eq!(
+            rule![p(a or b)],
+            BaseRule::Disjunctive(Rule::new([lit![p(a or b)]], []))
+        );
         assert_eq!(
             rule![p(a) or p(b)],
-            Rule::new(vec![lit![p(a)], lit![p(b)]], vec![])
+            BaseRule::Disjunctive(Rule::new([lit![p(a)], lit![p(b)]], []))
         );
-        assert_eq!(rule![0 = 1], Rule::new(vec![lit![0 = 1]], vec![]));
+        assert_eq!(
+            rule![0 = 1],
+            BaseRule::Disjunctive(Rule::new([lit![0 = 1]], []))
+        );
         assert_eq!(
             rule![0 != (0 + 1)],
-            Rule::new(vec![lit![0 != (0 + 1)]], vec![])
+            BaseRule::Disjunctive(Rule::new([lit![0 != (0 + 1)]], []))
         );
-        assert_eq!(rule![0 < 1], Rule::new(vec![lit![0 < 1]], vec![]));
+        assert_eq!(
+            rule![0 < 1],
+            BaseRule::Disjunctive(Rule::new([lit![0 < 1]], []))
+        );
         assert_eq!(
             rule![0 >= 1 if 1 < 0],
-            Rule::new(vec![lit![0 >= 1]], vec![lit![1 < 0]])
+            BaseRule::Disjunctive(Rule::new([lit![0 >= 1]], [lit![1 < 0]]))
         );
 
         // Look, Ma, negations in the head! Why, it's the excluded middle!
         assert_eq!(
             rule![p or not p],
-            Rule::new(vec![lit![p], lit![not p]], vec![])
+            BaseRule::Disjunctive(Rule::<Term>::new([lit![p], lit![not p]], []))
+        );
+
+        // Choice rules may be viewed as syntactic sugar for such negations.
+        assert_eq!(
+            rule![{ p }],
+            BaseRule::Choice(ChoiceRule::new(
+                Aggregate {
+                    choices: vec![lit![p]]
+                },
+                []
+            ))
         );
 
         // Bodies without heads are (conjunctive) "constraints".
-        assert_eq!(rule![if q(a)], Rule::new(vec![], vec![lit![q(a)]]));
+        assert_eq!(
+            rule![if q(a)],
+            BaseRule::Disjunctive(Rule::new([], [lit![q(a)]]))
+        );
         assert_eq!(
             rule![if q(a) and q(b) and q(c)],
-            Rule::new(vec![], vec![lit![q(a)], lit![q(b)], lit![q(c)]])
+            BaseRule::Disjunctive(Rule::new([], [lit![q(a)], lit![q(b)], lit![q(c)]]))
         );
 
         // Rules generally have a (disjunctive) head and a (conjunctive) body.
-        assert_eq!(rule![p if q], Rule::new(vec![lit![p]], vec![lit![q]]));
+        assert_eq!(
+            rule![p if q],
+            BaseRule::Disjunctive(Rule::<Term>::new([lit![p]], [lit![q]]))
+        );
         assert_eq!(
             rule![p(a) or p(b) or p(c) if q(a) and q(b) and q(c)],
-            Rule::new(
-                vec![lit![p(a)], lit![p(b)], lit![p(c)]],
-                vec![lit![q(a)], lit![q(b)], lit![q(c)]]
-            )
+            BaseRule::Disjunctive(Rule::new(
+                [lit![p(a)], lit![p(b)], lit![p(c)]],
+                [lit![q(a)], lit![q(b)], lit![q(c)]]
+            ))
         );
         assert_eq!(
             rule![p(a, b) if q(a) and not q(b)],
-            Rule::new(vec![lit![p(a, b)]], vec![lit![q(a)], lit![not q(b)]])
+            BaseRule::Disjunctive(Rule::new([lit![p(a, b)]], [lit![q(a)], lit![not q(b)]]))
         );
         assert_eq!(
             rule![p(a, b) if not q(a) and q(b)],
-            Rule::new(vec![lit![p(a, b)]], vec![lit![not q(a)], lit![q(b)]])
+            BaseRule::Disjunctive(Rule::new([lit![p(a, b)]], [lit![not q(a)], lit![q(b)]]))
         );
         assert_eq!(
             rule![0 < 1 if 0 > 1],
-            Rule::new(vec![lit![0 < 1]], vec![lit![0 > 1]])
+            BaseRule::Disjunctive(Rule::new([lit![0 < 1]], [lit![0 > 1]]))
         );
     }
 }

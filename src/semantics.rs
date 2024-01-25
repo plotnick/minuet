@@ -1,43 +1,79 @@
 //! Meaning-preserving manipulation of logic programs: ground all variables,
-//! remove all disjunctions, and "complete" all rules by transforming them
-//! from implications into equivalences. (See Dodaro's dissertation, Lifschitz
-//! "ASP", etc.) These are all pre-processing steps prior to compilation into
-//! a combinatorial search problem and resolution into stable models.
+//! normalize propositional images, and complete rules by transforming them
+//! from implications into equivalences.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::ops::Index;
 
+use crate::clause::{Clause, Conjunction, Disjunction, Dnf};
 use crate::formula::{Bindings, Formula, Groundable, Interpretation, Names, Universe};
 use crate::generate::combinations_mixed;
+use crate::image::{Context, PropositionalImage as _};
 use crate::syntax::*;
-use crate::values::IntoImage;
 
-/// A program is a collection of rules that we'll process in strict order,
-/// generating a new (potentially much larger) set of rules at each stage:
-///
-///   Program → Normal Program → Ground Program → Complete Program
-///
-/// Only the first has a public constructor; the others must be produced
-/// by calling the appropriate method (`normalize`, `ground`, `complete`)
-/// on their predecessor.
+/// A program is a collection of rules, which we'll preprocess prior to
+/// compilation in a strict sequence of meaning-preserving steps. Each
+/// step generates a new (potentially exponentially larger) program of a
+/// different type. There is a unique method of zero arguments arguments
+/// on each program type that advances to the next step; e.g., `ground`,
+/// `image`, `normalize`, `shift`, `complete`.
 #[derive(Clone, Debug)]
-pub struct Program(Vec<Rule>);
+pub struct Program<R>(Vec<R>);
 
-impl Program {
-    pub fn new(rules: impl IntoIterator<Item = Rule>) -> Self {
+impl<R> Program<R> {
+    pub fn new(rules: impl IntoIterator<Item = R>) -> Self {
         Self(rules.into_iter().collect())
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &Rule> {
+    pub fn iter(&self) -> impl Iterator<Item = &R> {
         self.0.iter()
     }
 
-    pub fn normalize(self) -> NormalProgram<Term> {
-        NormalProgram::new(self.iter().flat_map(NormalRule::normalize))
+    pub fn into_iter(self) -> impl Iterator<Item = R> {
+        self.0.into_iter()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
-impl fmt::Display for Program {
+impl<R> Formula for Program<R>
+where
+    R: Formula,
+{
+    fn atoms(&self, interp: &mut Interpretation) {
+        for rule in self.iter() {
+            rule.atoms(interp);
+        }
+    }
+
+    fn eval(&self, interp: &Interpretation) -> bool {
+        self.iter().all(|rule| rule.eval(interp))
+    }
+
+    fn is_positive(&self) -> bool {
+        self.iter().all(|rule| rule.is_positive())
+    }
+}
+
+impl<R> Index<usize> for Program<R> {
+    type Output = R;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.0.index(index)
+    }
+}
+
+impl<R> fmt::Display for Program<R>
+where
+    R: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for c in self.iter() {
             c.fmt(f)?;
@@ -47,95 +83,146 @@ impl fmt::Display for Program {
     }
 }
 
-/// A "normal" (non-disjunctive, Prolog-style) rule has at most one (positive)
-/// head atom and a (possibly empty) conjunctive body.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct NormalRule<T: Clone> {
-    head: Option<Atom<T>>,
-    body: Vec<Literal<T>>,
-}
-
-impl<T: Clone> NormalRule<T> {
-    fn new(head: Option<Atom<T>>, body: impl IntoIterator<Item = Literal<T>>) -> Self {
-        Self {
-            head,
-            body: body.into_iter().collect(),
-        }
+impl Program<BaseRule<Term>> {
+    /// A convenience method to "skip to the end": run through each
+    /// preprocessing step in sequence and return the result.
+    pub fn preprocess(self) -> Program<CompleteRule> {
+        self.ground().image().normalize().shift().complete()
     }
 }
 
-impl NormalRule<Term> {
-    /// Build a set of normal (non-disjunctive) rules from a disjunctive
-    /// rule, one for each atom in the head. Also called rule shifting
-    /// (Dodaro Definition 10). But first move non-positive terms from
-    /// the head to the body (negated); see Lifschitz, "ASP" §5.8.
-    fn normalize(rule: &Rule) -> Vec<Self> {
-        let (positive, negative): (Vec<_>, Vec<_>) =
-            rule.head.iter().partition(|l| l.is_positive());
+impl Groundable for Program<BaseRule<Term>> {
+    type Ground = Program<BaseRule<GroundTerm>>;
 
-        let head: Vec<Atom<Term>> = positive
+    fn is_ground(&self) -> bool {
+        self.iter().all(|rule| rule.is_ground())
+    }
+
+    /// The first step in program preprocessing is grounding: find all
+    /// constants, and bind all variables to them in all possible ways.
+    /// The zero-argument step method is `ground`, which punts to this.
+    /// TODO: less naïve grounding strategy, inject initial bindings.
+    fn ground_with(self, _bindings: &Bindings) -> Self::Ground {
+        let mut constants = Universe::new();
+        self.constants(&mut constants);
+        let constants = constants.into_iter().collect::<Vec<Constant>>();
+
+        let mut variables = Names::new();
+        self.variables(&mut variables);
+        let variables = variables.into_iter().collect::<Vec<Symbol>>();
+
+        let (ground_rules, var_rules): (Vec<_>, Vec<_>) =
+            self.into_iter().partition(|r| r.is_ground());
+        let mut rules = ground_rules
             .into_iter()
-            .cloned()
-            .map(|l| match l {
-                Literal::Positive(a) => a,
-                _ => panic!("positive partition"),
-            })
-            .collect();
+            .map(|rule| rule.ground())
+            .collect::<Vec<_>>();
 
-        let mut body = rule.body.clone();
-        body.extend(negative.into_iter().cloned().map(|l| l.negate()));
+        let m = constants.len();
+        let n = variables.len();
+        combinations_mixed(n, &vec![m; n], |a: &[usize]| {
+            let bindings = a
+                .iter()
+                .enumerate()
+                .map(|(i, &j)| (variables[i].clone(), constants[j].clone()))
+                .collect::<Bindings>();
+            rules.extend(
+                var_rules
+                    .iter()
+                    .cloned()
+                    .map(|rule| rule.ground_with(&bindings)),
+            );
+        });
 
-        if head.is_empty() {
-            vec![Self::new(None, body)]
-        } else {
-            head.iter()
-                .map(|h| {
-                    Self::new(
-                        Some(h.clone()),
-                        body.iter().cloned().chain(head.iter().filter_map(|a| {
-                            if a != h {
-                                Some(Literal::Negative(a.clone()))
-                            } else {
-                                None
-                            }
-                        })),
-                    )
-                })
-                .collect::<Vec<_>>()
+        Program::new(rules)
+    }
+
+    fn constants(&self, universe: &mut Universe) {
+        for rule in self.iter() {
+            rule.constants(universe);
+        }
+    }
+
+    fn variables(&self, names: &mut Names) {
+        for rule in self.iter() {
+            rule.variables(names);
         }
     }
 }
 
-impl Formula for NormalRule<GroundTerm> {
-    fn atoms(&self, interp: &mut Interpretation) {
-        for h in &self.head {
-            h.atoms(interp);
+impl Groundable for BaseRule<Term> {
+    type Ground = BaseRule<GroundTerm>;
+
+    fn is_ground(&self) -> bool {
+        match self {
+            Self::Choice(rule) => rule.is_ground(),
+            Self::Disjunctive(rule) => rule.is_ground(),
         }
+    }
+
+    fn ground_with(self, bindings: &Bindings) -> Self::Ground {
+        match self {
+            Self::Choice(rule) => Self::Ground::Choice(rule.ground_with(bindings)),
+            Self::Disjunctive(rule) => Self::Ground::Disjunctive(rule.ground_with(bindings)),
+        }
+    }
+
+    fn constants(&self, universe: &mut Universe) {
+        match self {
+            Self::Choice(rule) => rule.constants(universe),
+            Self::Disjunctive(rule) => rule.constants(universe),
+        }
+    }
+
+    fn variables(&self, names: &mut Names) {
+        match self {
+            Self::Choice(rule) => rule.variables(names),
+            Self::Disjunctive(rule) => rule.variables(names),
+        }
+    }
+}
+
+impl Groundable for ChoiceRule<Term> {
+    type Ground = ChoiceRule<GroundTerm>;
+
+    fn is_ground(&self) -> bool {
+        self.head.is_ground() && self.body.iter().all(|b| b.is_ground())
+    }
+
+    fn ground_with(self, bindings: &Bindings) -> Self::Ground {
+        Self::Ground::new(
+            self.head.ground_with(bindings),
+            self.body.into_iter().map(|b| b.ground_with(bindings)),
+        )
+    }
+
+    fn constants(&self, universe: &mut Universe) {
+        self.head.constants(universe);
         for b in &self.body {
-            b.atoms(interp);
+            b.constants(universe);
         }
     }
 
-    fn is_definite(&self) -> bool {
-        self.head.iter().all(|h| h.is_definite()) && self.body.iter().all(|b| b.is_definite())
-    }
-
-    fn eval(&self, interp: &Interpretation) -> bool {
-        self.head.iter().any(|h| h.eval(interp)) && self.body.iter().all(|b| b.eval(interp))
+    fn variables(&self, names: &mut Names) {
+        self.head.variables(names);
+        for b in &self.body {
+            b.variables(names);
+        }
     }
 }
 
-impl Groundable for NormalRule<Term> {
-    type Ground = NormalRule<GroundTerm>;
+impl Groundable for Rule<Term> {
+    type Ground = Rule<GroundTerm>;
 
     fn is_ground(&self) -> bool {
         self.head.iter().all(|h| h.is_ground()) && self.body.iter().all(|b| b.is_ground())
     }
 
-    fn ground(self, bindings: &Bindings) -> Self::Ground {
+    /// Ground one rule.
+    fn ground_with(self, bindings: &Bindings) -> Self::Ground {
         Self::Ground::new(
-            self.head.map(|h| h.ground(bindings)),
-            self.body.into_iter().map(|b| b.ground(bindings)),
+            self.head.into_iter().map(|h| h.ground_with(bindings)),
+            self.body.into_iter().map(|b| b.ground_with(bindings)),
         )
     }
 
@@ -158,171 +245,249 @@ impl Groundable for NormalRule<Term> {
     }
 }
 
-impl<T> fmt::Display for NormalRule<T>
-where
-    T: Clone + fmt::Display,
-{
+impl Program<BaseRule<GroundTerm>> {
+    /// The next step in program preprocessing is finding the propositional
+    /// image of each rule.
+    pub fn image(self) -> Program<PropositionalRule> {
+        Program::new(self.into_iter().flat_map(BaseRule::<GroundTerm>::image))
+    }
+}
+
+/// A propositional rule has arbitrary (ground) clauses as head and body.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PropositionalRule {
+    pub head: Clause,
+    pub body: Clause,
+}
+
+impl fmt::Display for PropositionalRule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match (&self.head, self.body.is_empty()) {
-            (None, true) => Ok(()),
-            (None, false) => f.write_fmt(format_args!(
-                "if {}",
-                self.body
-                    .iter()
-                    .map(|c| c.to_string())
-                    .collect::<Vec<_>>()
-                    .join(" and ")
-            )),
-            (Some(head), true) => f.write_fmt(format_args!("{head}")),
-            (Some(head), false) => f.write_fmt(format_args!(
-                "{head} if {}",
-                self.body
-                    .iter()
-                    .map(|c| c.to_string())
-                    .collect::<Vec<_>>()
-                    .join(" and ")
-            )),
+        f.write_fmt(format_args!("{} ← {}", self.head, self.body))
+    }
+}
+
+impl BaseRule<GroundTerm> {
+    /// Find the propositional image of one base rule (which may be more
+    /// than one propositional rule). See the `PropositionalImage` trait
+    /// for details.
+    fn image(self) -> Vec<PropositionalRule> {
+        match self {
+            Self::Choice(ChoiceRule { head, body }) => head
+                .image(Context::Head)
+                .into_iter()
+                .map(|head| PropositionalRule {
+                    head,
+                    body: Clause::and(body.iter().cloned().map(Clause::Lit)),
+                })
+                .collect(),
+            Self::Disjunctive(Rule { head, body }) => vec![PropositionalRule {
+                head: Clause::or(head.into_iter().map(|h| h.image(Context::Head))),
+                body: Clause::and(body.into_iter().map(|b| b.image(Context::Body))),
+            }],
         }
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct NormalProgram<T: Clone>(Vec<NormalRule<T>>);
-
-impl<T: Clone> NormalProgram<T> {
-    fn new(rules: impl IntoIterator<Item = NormalRule<T>>) -> Self {
-        Self(rules.into_iter().collect())
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &NormalRule<T>> {
-        self.0.iter()
-    }
-
-    pub fn into_iter(self) -> impl Iterator<Item = NormalRule<T>> {
-        self.0.into_iter()
+impl Program<PropositionalRule> {
+    /// The next preprocessing step is normalization, where we bring the head
+    /// and body into a canonical form. See "ASP" and Lifschitz & Tang (1999),
+    /// "Nested Expressions in Logic Programs".
+    pub fn normalize(self) -> Program<NormalRule> {
+        Program::new(self.into_iter().flat_map(PropositionalRule::normalize))
     }
 }
 
-impl Groundable for NormalProgram<Term> {
-    type Ground = GroundProgram;
+impl PropositionalRule {
+    /// Normalize one rule. We use an intermediate semi-normal form,
+    /// and expand all nontrivial con/disjunctions in the head/body.
+    fn normalize(self) -> Vec<NormalRule> {
+        // Bring the head/body into dis/conjunctive normal form.
+        let head = self.head.dnf();
+        let body = self.body.cnf();
 
-    fn is_ground(&self) -> bool {
-        self.iter().all(|rule| rule.is_ground())
-    }
+        // Replace nontrivial disjunctions in the body as described
+        // in "ASP" exercise 4.7 (c): p ← q ∨ r = {p ← q, p ← r},
+        #[derive(Debug)]
+        struct BodyNormalizedRule {
+            head: Dnf,
+            body: Conjunction<Literal<GroundTerm>>,
+        }
+        impl BodyNormalizedRule {
+            fn new(head: Dnf, body: Conjunction<Literal<GroundTerm>>) -> Self {
+                Self { head, body }
+            }
+        }
 
-    /// Ground all variables in all possible ways.
-    // TODO: less naïve grounding.
-    fn ground(self, _bindings: &Bindings) -> GroundProgram {
-        let mut constants = Universe::new();
-        self.constants(&mut constants);
-        let constants = constants.into_iter().collect::<Vec<Constant>>();
+        let rules = if body.iter().any(|x| x.len() > 1) {
+            // Break nontrivial disjunctions into multiple rules.
+            body.dnf()
+                .into_iter()
+                .map(|body| BodyNormalizedRule::new(head.clone(), body))
+                .collect()
+        } else {
+            // Normalize and hoist trivial disjunctions.
+            vec![BodyNormalizedRule::new(
+                head,
+                Conjunction::from_iter(body.into_iter().map(|d| match d.len() {
+                    0 => Self::f(),
+                    1 => d.into_iter().next().expect("missing disjunct"),
+                    _ => unreachable!("nontrivial disjunction"),
+                })),
+            )]
+        };
 
-        let mut variables = Names::new();
-        self.variables(&mut variables);
-        let variables = variables.into_iter().collect::<Vec<Symbol>>();
-
-        let (ground_rules, var_rules): (Vec<_>, Vec<_>) =
-            self.into_iter().partition(|r| r.is_ground());
-        let mut rules = ground_rules
+        // Replace nontrivial conjunctions in the head as described
+        // in "ASP" §5.4: p ∧ q ∧ r ← s = {p ← s, q ← s, r ← s}.
+        rules
             .into_iter()
-            .map(|rule| rule.ground_new())
-            .collect::<Vec<_>>();
-
-        let m = constants.len();
-        let n = variables.len();
-        combinations_mixed(n, &vec![m; n], |a: &[usize]| {
-            let bindings = a
-                .iter()
-                .enumerate()
-                .map(|(i, &j)| (variables[i].clone(), constants[j].clone()))
-                .collect::<Bindings>();
-            rules.extend(var_rules.iter().cloned().map(|rule| rule.ground(&bindings)));
-        });
-
-        GroundProgram::new(NormalProgram::new(rules))
+            .flat_map(|BodyNormalizedRule { head, body }| {
+                if head.iter().any(|x| x.len() > 1) {
+                    // Break nontrivial conjunctions into multiple rules.
+                    head.cnf()
+                        .into_iter()
+                        .map(|head| NormalRule::new(head, body.clone()))
+                        .collect()
+                } else {
+                    // Normalize and hoist trivial conjunctions.
+                    vec![NormalRule::new(
+                        Disjunction::from_iter(head.into_iter().map(|c| match c.len() {
+                            0 => Self::t(),
+                            1 => c.into_iter().next().expect("missing conjunct"),
+                            _ => unreachable!("nontrivial conjunction"),
+                        })),
+                        body,
+                    )]
+                }
+            })
+            .collect()
     }
 
-    fn constants(&self, universe: &mut Universe) {
-        for r in self.iter() {
-            r.constants(universe);
-        }
+    /// A normal representation of _true_: `0 = 0`.
+    fn t() -> Literal<GroundTerm> {
+        let zero = GroundTerm::Constant(Constant::Number(0));
+        Literal::relation(zero.clone(), RelOp::Eq, zero)
     }
 
-    fn variables(&self, names: &mut Names) {
-        for r in self.iter() {
-            r.variables(names);
+    /// A normal representation of _false_: `0 != 0`.
+    fn f() -> Literal<GroundTerm> {
+        Self::t().negate()
+    }
+}
+
+/// A strictly disjunctive head and strictly conjunctive body.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NormalRule {
+    head: Disjunction<Literal<GroundTerm>>,
+    body: Conjunction<Literal<GroundTerm>>,
+}
+
+impl NormalRule {
+    fn new(head: Disjunction<Literal<GroundTerm>>, body: Conjunction<Literal<GroundTerm>>) -> Self {
+        Self { head, body }
+    }
+}
+
+impl fmt::Display for NormalRule {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_fmt(format_args!("{} ← {}", self.head, self.body))
+    }
+}
+
+impl Program<NormalRule> {
+    /// The penultimate program preprocessing step is shifting, wherein we
+    /// produce a set of rules with at most one positive atom for a head;
+    /// see Lifschitz, "ASP" §5.8 and Dodaro definition 10.
+    pub fn shift(self) -> Program<ShiftedRule> {
+        Program::new(self.into_iter().flat_map(NormalRule::shift))
+    }
+}
+
+impl NormalRule {
+    /// Shift one rule: keep positive atoms in the head, move negative ones
+    /// to the body.
+    fn shift(self) -> Vec<ShiftedRule> {
+        let (positive, negative): (Vec<_>, Vec<_>) =
+            self.head.into_iter().partition(|l| l.is_positive());
+        let head: Interpretation =
+            positive
+                .into_iter()
+                .fold(Interpretation::new(), |mut atoms, clause| {
+                    clause.atoms(&mut atoms);
+                    atoms
+                });
+
+        let body = self.body.and_also(negative.into_iter().map(|c| c.negate()));
+        if head.is_empty() {
+            vec![ShiftedRule::new(None, body)]
+        } else {
+            head.iter()
+                .map(|h| {
+                    ShiftedRule::new(
+                        Some(h.clone()),
+                        body.clone().and_also(head.iter().filter_map(|a| {
+                            if a != h {
+                                Some(Literal::Negative(a.clone()))
+                            } else {
+                                None
+                            }
+                        })),
+                    )
+                })
+                .collect()
         }
     }
 }
 
-impl Formula for NormalProgram<GroundTerm> {
+/// A shifted rule has at most one (positive) head atom and
+/// a (possibly empty) conjunctive body.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ShiftedRule {
+    head: Option<Atom<GroundTerm>>,
+    body: Conjunction<Literal<GroundTerm>>,
+}
+
+impl ShiftedRule {
+    fn new(head: Option<Atom<GroundTerm>>, body: Conjunction<Literal<GroundTerm>>) -> Self {
+        Self { head, body }
+    }
+}
+
+impl Formula for ShiftedRule {
     fn atoms(&self, interp: &mut Interpretation) {
-        for r in self.iter() {
-            r.atoms(interp);
+        if let Some(h) = self.head.as_ref() {
+            h.atoms(interp);
         }
+        self.body.iter().for_each(|b| b.atoms(interp));
     }
 
-    fn is_definite(&self) -> bool {
-        self.iter().all(|r| r.is_definite())
+    fn is_positive(&self) -> bool {
+        self.head.iter().all(|h| h.is_positive()) && self.body.iter().all(|b| b.is_positive())
     }
 
     fn eval(&self, interp: &Interpretation) -> bool {
-        self.iter().all(|r| r.eval(interp))
+        self.head.iter().any(|h| h.eval(interp)) && self.body.iter().all(|b| b.eval(interp))
     }
 }
 
-impl<T> fmt::Display for NormalProgram<T>
-where
-    T: Clone + fmt::Display,
-{
+impl fmt::Display for ShiftedRule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for c in self.iter() {
-            c.fmt(f)?;
-            f.write_str("\n")?;
-        }
-        Ok(())
+        f.write_fmt(format_args!(
+            "{} ← {}",
+            self.head
+                .as_ref()
+                .map(|h| h.to_string())
+                .unwrap_or_else(|| String::from("⊥")),
+            self.body
+        ))
     }
 }
 
-/// Auxiliary atoms that represent rules.
-pub type AuxAtoms = Vec<Atom<GroundTerm>>;
-
-/// Fresh, unique atoms to associate with each rule.
-// TODO: optionally use random numbers to avoid collisions.
-pub fn genaux(aux: &str, id: usize, atoms: &Interpretation) -> Atom<GroundTerm> {
-    assert!(!aux.is_empty(), "can't make an aux atom without a prefix");
-    for i in 0..100 {
-        let x = aux[aux.len() - 1..].repeat(i);
-        let a = Atom::new(Symbol::new(format!("{aux}{x}_{id}")), vec![]);
-        if !atoms.contains(&a) {
-            return a;
-        }
-    }
-    panic!("can't make an aux atom for this program");
-}
-
-/// A ground program contains no variables.
-#[derive(Clone, Debug)]
-pub struct GroundProgram(NormalProgram<GroundTerm>);
-
-impl GroundProgram {
-    fn new(program: NormalProgram<GroundTerm>) -> Self {
-        Self(program)
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &NormalRule<GroundTerm>> {
-        self.0.iter()
-    }
-
-    #[cfg(test)]
-    pub fn into_iter(self) -> impl Iterator<Item = NormalRule<GroundTerm>> {
-        self.0.into_iter()
-    }
-
-    /// Program completion, also called Clark's completion.
-    /// See Lifschitz, "ASP" §5.9.
-    pub fn complete(self) -> CompleteProgram {
-        // Index of which rules' heads contain a given atom.
+impl Program<ShiftedRule> {
+    /// The last preprocessing step prior to compilation and solving is
+    /// called _Clark's completion_. It turns each implication into an
+    /// equivalence; see Lifschitz, "ASP" §5.9 and Dodaro §3.3.
+    pub fn complete(self) -> Program<CompleteRule> {
+        // Which rules' heads contain a given atom.
         let mut heads = BTreeMap::<Atom<GroundTerm>, BTreeSet<usize>>::new();
         for (i, rule) in self.iter().enumerate() {
             if let Some(a) = &rule.head {
@@ -330,215 +495,108 @@ impl GroundProgram {
             }
         }
 
-        // Expand head atoms.
-        let mut raw_atoms = Interpretation::new();
         let mut atoms = Interpretation::new();
-        self.atoms(&mut raw_atoms);
-        for atom in raw_atoms {
-            let bodies = heads.get(&atom).cloned().unwrap_or_default();
-            for image in atom.into_image() {
-                // TODO: Many atoms will have only themselves as images.
-                heads
-                    .entry(image.clone())
-                    .or_default()
-                    .extend(bodies.clone().into_iter());
-                atoms.insert(image);
-            }
-        }
-
-        // Build the constraints.
-        let mut constraints = Vec::new();
+        self.atoms(&mut atoms);
+        let mut rules = Vec::new();
         for rule in self.iter() {
             match &rule.head {
-                None => constraints.push(Constraint::new(None, vec![rule.body.clone()])),
+                None => rules.push(CompleteRule::new(
+                    None,
+                    Disjunction::from_iter([rule.body.clone()]),
+                )),
                 Some(head) => {
-                    for head in head.clone().into_image() {
-                        if atoms.remove(&head) {
-                            let bodies = heads
-                                .get(&head)
-                                .map(|rules| {
-                                    rules
-                                        .iter()
-                                        .map(|&i| self.0 .0[i].body.clone())
-                                        .collect::<Vec<_>>()
-                                })
-                                .unwrap_or_default();
-                            let images = bodies.into_iter().flat_map(|body| body.into_image());
-                            constraints.push(Constraint::new(Some(head.clone()), images));
-                        }
+                    if atoms.remove(head) {
+                        let bodies = heads
+                            .get(head)
+                            .map(|rules| {
+                                Disjunction::from_iter(rules.iter().map(|&i| self[i].body.clone()))
+                            })
+                            .unwrap_or_default();
+                        rules.push(CompleteRule::new(Some(head.clone()), bodies));
                     }
                 }
             }
         }
         // TODO: if !atoms.is_empty() { trace: atoms unused in any head }
 
-        CompleteProgram::new(constraints)
+        Program::new(rules)
     }
 }
 
-impl Formula for GroundProgram {
-    fn atoms(&self, interp: &mut Interpretation) {
-        self.0.atoms(interp)
-    }
-
-    fn is_definite(&self) -> bool {
-        self.iter().all(|r| r.is_definite())
-    }
-
-    fn eval(&self, interp: &Interpretation) -> bool {
-        self.0.eval(interp)
-    }
-}
-
-impl fmt::Display for GroundProgram {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for c in self.iter() {
-            c.fmt(f)?;
-            f.write_str("\n")?;
-        }
-        Ok(())
-    }
-}
-
-/// The result of completion is a set of constraints: equivalences
-/// for each atom, where the body is now a *disjunction* of normal
-/// (conjunctive, grounded) rule bodies; see Lifschitz, "ASP" §5.9.
+/// The result of completion is a set of equivalences for each head atom,
+/// where the body is now a *disjunction* of normal (conjunctive, grounded)
+/// rule bodies; see Lifschitz, "ASP" §5.9.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Constraint {
+pub struct CompleteRule {
     head: Option<Atom<GroundTerm>>,
-    body: Vec<Vec<Literal<GroundTerm>>>,
+    body: Dnf,
 }
 
-impl Constraint {
-    pub fn new(
-        head: Option<Atom<GroundTerm>>,
-        body: impl IntoIterator<Item = Vec<Literal<GroundTerm>>>,
-    ) -> Self {
-        Self {
-            head,
-            body: body.into_iter().collect(),
-        }
-    }
-
-    /// Delete each disjunct that has a negative literal `not b` with `b ∈ I`,
-    /// and all negative literals in the conjuncts of the remaining disjuncts.
-    fn reduce(self, interp: &Interpretation) -> Self {
-        Self {
-            head: self.head,
-            body: self
-                .body
-                .into_iter()
-                .filter_map(|b| {
-                    if b.iter().any(|c| c.is_negative() && !c.eval(interp)) {
-                        None
-                    } else {
-                        Some(b.into_iter().filter(|c| c.is_positive()).collect())
-                    }
-                })
-                .collect(),
-        }
+impl CompleteRule {
+    pub fn new(head: Option<Atom<GroundTerm>>, body: Dnf) -> Self {
+        Self { head, body }
     }
 }
 
-impl Formula for Constraint {
+impl Formula for CompleteRule {
     fn atoms(&self, interp: &mut Interpretation) {
-        for h in self.head.iter() {
+        if let Some(h) = self.head.as_ref() {
             h.atoms(interp);
         }
-        for b in self.body.iter() {
-            for c in b {
-                c.atoms(interp);
-            }
-        }
+        self.body.atoms(interp);
     }
 
-    fn is_definite(&self) -> bool {
-        self.head.iter().all(|h| h.is_definite())
-            && self.body.iter().all(|b| b.iter().all(|c| c.is_definite()))
+    fn is_positive(&self) -> bool {
+        self.head.iter().all(|h| h.is_positive()) && self.body.is_positive()
     }
 
     fn eval(&self, interp: &Interpretation) -> bool {
-        self.head.as_ref().is_some_and(|h| h.eval(interp))
-            == self.body.iter().any(|b| b.iter().all(|c| c.eval(interp)))
+        self.head.as_ref().is_some_and(|h| h.eval(interp)) == self.body.eval(interp)
     }
 }
 
-impl fmt::Display for Constraint {
+impl fmt::Display for CompleteRule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let body = self
-            .body
-            .iter()
-            .map(|b| {
-                format!(
-                    "({})",
-                    b.iter()
-                        .map(|c| c.to_string())
-                        .collect::<Vec<_>>()
-                        .join(" and ")
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(" or ");
-        if let Some(head) = &self.head {
-            f.write_fmt(format_args!("{} iff {}", head, body))
-        } else {
-            f.write_fmt(format_args!("iff {}", body))
-        }
+        f.write_fmt(format_args!(
+            "{} ↔ {}",
+            self.head
+                .as_ref()
+                .map(|h| h.to_string())
+                .unwrap_or_else(|| String::from("⊥")),
+            self.body
+        ))
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct CompleteProgram(Vec<Constraint>);
-
-impl CompleteProgram {
-    fn new(program: impl IntoIterator<Item = Constraint>) -> Self {
-        Self(program.into_iter().collect::<Vec<_>>())
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &Constraint> {
-        self.0.iter()
-    }
-
-    pub fn into_iter(self) -> impl Iterator<Item = Constraint> {
-        self.0.into_iter()
-    }
-
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
+impl Program<CompleteRule> {
+    /// The very last step in program processing is checking for model
+    /// stability, which requires _reducing_ the program by a potential
+    /// solution and checking that its solution agrees with that of the
+    /// unreduced program. We do not currently define a different type
+    /// for the reduced program; the only difference is that it's always
+    /// positive (definite, i.e., negation-free).
     pub fn reduce(self, interp: &Interpretation) -> Self {
         Self(self.into_iter().map(|r| r.reduce(interp)).collect())
     }
 }
 
-impl Formula for CompleteProgram {
-    fn atoms(&self, interp: &mut Interpretation) {
-        for r in self.iter() {
-            r.atoms(interp);
+impl CompleteRule {
+    /// Reduce one rule: delete each disjunct that has a negative literal `not b`
+    /// with `b ∈ I`, and all negative literals in the conjuncts of the remaining
+    /// disjuncts.
+    fn reduce(self, interp: &Interpretation) -> Self {
+        Self {
+            head: self.head,
+            body: Disjunction::from_iter(self.body.into_iter().filter_map(|b| {
+                if !b.is_positive() && !b.eval(interp) {
+                    None
+                } else {
+                    Some(Conjunction::from_iter(
+                        b.into_iter().filter(|c| c.is_positive()),
+                    ))
+                }
+            })),
         }
-    }
-
-    fn is_definite(&self) -> bool {
-        self.iter().all(|c| c.is_definite())
-    }
-
-    fn eval(&self, interp: &Interpretation) -> bool {
-        self.iter().all(|c| c.eval(interp))
-    }
-}
-
-impl fmt::Display for CompleteProgram {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for c in self.iter() {
-            c.fmt(f)?;
-            f.write_str("\n")?;
-        }
-        Ok(())
     }
 }
 
@@ -547,109 +605,89 @@ mod test {
     use super::*;
 
     macro_rules! nrule {
-        [$($rule:tt)*] => {{
-            let mut n = NormalRule::normalize(&rule![$($rule)*]);
-            assert_eq!(n.len(), 1);
-            n.remove(0)
-        }}
+        [if $(($($body:tt)*))and+] => {
+            NormalRule::new(
+                Disjunction::f(),
+                Conjunction::from_iter([$(glit![$($body)*]),+])
+            )
+        };
+        [$head:ident($($args:tt)*) if $(($($body:tt)*))and*] => {
+            NormalRule::new(
+                Disjunction::from_iter(gatom![$head($($args)*)]),
+                Conjunction::from_iter([$(glit![$body]),*])
+            )
+        };
+        [$(($($head:tt)*))or*] => {
+            NormalRule::new(
+                Disjunction::from_iter([$(glit![$($head)*]),*]),
+                Conjunction::from_iter([])
+            )
+        };
+        [$(($($head:tt)*))or* if $(($($body:tt)*))and*] => {
+            NormalRule::new(
+                Disjunction::from_iter([$(glit![$($head)*]),*]),
+                Conjunction::from_iter([$(glit![$($body)*]),*])
+            )
+        };
     }
 
-    macro_rules! constraint {
-        [iff $(($($body:tt)*))or+] => {
-            Constraint::new(
+    macro_rules! srule {
+        [if $(($($body:tt)*))and+] => {
+            ShiftedRule::new(
                 None,
-                vec![$(nrule![if $($body)*].ground_new().body),+]
+                Conjunction::from_iter([$(glit![$($body)*]),+])
             )
         };
-        [$head:ident($($args:tt)*) iff $(($($body:tt)*))or*] => {
-            Constraint::new(
-                Some(atom![$head($($args)*)].ground(&Bindings::new())),
-                vec![$(nrule![if $($body)*].ground_new().body),*]
+        [$head:ident($($args:tt)*) if $(($($body:tt)*))and*] => {
+            ShiftedRule::new(
+                Some(gatom![$head($($args)*)]),
+                Conjunction::from_iter([$(glit![$($body)*]),*])
             )
         };
-        [$head:ident iff $(($($body:tt)*))or*] => {
-            Constraint::new(
-                Some(atom![$head]),
-                vec![$(nrule![if $($body)*].ground_new().body),*]
+        [$head:ident if $(($($body:tt)*))and*] => {
+            ShiftedRule::new(
+                Some(gatom![$head]),
+                Conjunction::from_iter([$(glit![$($body)*]),*])
+            )
+        };
+    }
+
+    macro_rules! crule {
+        [iff $(($(($($conj:tt)*))and*))or*] => {
+            CompleteRule::new(
+                None,
+                Disjunction::from_iter([$(Conjunction::from_iter([$(glit![$($conj)*]),*])),*])
+            )
+        };
+        [$head:ident($($args:tt)*) iff $(($(($($conj:tt)*))and*))or*] => {
+            CompleteRule::new(
+                Some(gatom![$head($($args)*)]),
+                Disjunction::from_iter([$(Conjunction::from_iter([$(glit![$($conj)*]),*])),*])
+            )
+        };
+        [$head:ident iff $(($(($($conj:tt)*))and*))or*] => {
+            CompleteRule::new(
+                Some(gatom![$head]),
+                Disjunction::from_iter([$(Conjunction::from_iter([$(glit![$($conj)*]),*])),*])
             )
         };
     }
 
     macro_rules! interp {
         {$($head:ident$(($($arg:tt),*))?),*} => {
-            [$(atom![$head$(($($arg),*))?]),*]
+            [$(gatom![$head$(($($arg),*))?]),*]
                 .into_iter()
                 .collect::<Interpretation>()
         }
     }
 
-    /// "Rule shifting" turns a disjunctive rule into a set of normal rules
-    /// (with at most one head atom).
-    #[test]
-    fn normalize_disjunctive_rule() {
-        let r = rule![a or b or c if d and e];
-        let n = NormalRule::normalize(&r);
-        assert_eq!(
-            n,
-            [
-                nrule![a if d and e and not b and not c],
-                nrule![b if d and e and not a and not c],
-                nrule![c if d and e and not a and not b]
-            ]
-        );
-    }
-
-    #[test]
-    fn normalize_constraint() {
-        let r = rule![if p and q];
-        let n = NormalRule::normalize(&r);
-        assert_eq!(n.len(), 1);
-        assert_eq!(n[0], nrule![if p and q]);
-    }
-
-    #[test]
-    fn normalize_head_negation() {
-        let r = rule![not q];
-        let n = NormalRule::normalize(&r);
-        assert_eq!(n, vec![nrule![if not not q]]);
-
-        let r = rule![p or not q];
-        let n = NormalRule::normalize(&r);
-        assert_eq!(n, vec![nrule![p if not not q]]);
-    }
-
-    #[test]
-    fn normalize_double_head_negation() {
-        let r = rule![not not q];
-        let n = NormalRule::normalize(&r);
-        assert_eq!(n, vec![nrule![if not q]]);
-
-        let r = rule![p or not not q];
-        let n = NormalRule::normalize(&r);
-        assert_eq!(n, vec![nrule![p if not q]]);
-    }
-
     /// This program is already ground.
     #[test]
     fn ground_trivial_0() {
-        let program = Program::new([rule![a or b or c]]).normalize();
+        let ground = Program::new([rule![a or b or c]]).ground();
         assert_eq!(
-            program.iter().cloned().collect::<Vec<_>>(),
-            vec![
-                nrule![a if not b and not c],
-                nrule![b if not a and not c],
-                nrule![c if not a and not b]
-            ]
-        );
-
-        let ground = program.clone().ground_new();
-        assert_eq!(
-            ground.into_iter().collect::<Vec<_>>(),
-            vec![
-                nrule![a if not b and not c].ground_new(),
-                nrule![b if not a and not c].ground_new(),
-                nrule![c if not a and not b].ground_new(),
-            ]
+            ground.iter().cloned().collect::<Vec<_>>(),
+            vec![rule![a or b or c].ground()]
         );
     }
 
@@ -657,20 +695,13 @@ mod test {
     #[test]
     fn ground_trivial_1() {
         let rules = [rule![p(X) if p(a) and p(b)]];
-        let program = Program::new(rules).normalize();
+        let ground = Program::new(rules).ground();
         assert_eq!(
-            program.iter().cloned().collect::<Vec<_>>(),
-            [nrule![p(X) if p(a) and p(b)]]
-        );
-
-        let b = Bindings::new();
-        let ground = program.ground(&b);
-        assert_eq!(
-            ground.into_iter().collect::<Vec<_>>(),
-            vec![
-                nrule![p(a) if p(a) and p(b)].ground(&b),
-                nrule![p(b) if p(a) and p(b)].ground(&b)
-            ],
+            ground.iter().cloned().collect::<Vec<_>>(),
+            [
+                rule![p(a) if p(a) and p(b)].ground(),
+                rule![p(b) if p(a) and p(b)].ground()
+            ]
         );
     }
 
@@ -678,94 +709,112 @@ mod test {
     #[test]
     fn ground_gelfond_lifschitz_5() {
         let rules = [rule![p(1, 2)], rule![q(X) if p(X, Y) and not q(Y)]];
-        let ground = Program::new(rules).normalize().ground_new();
+        let ground = Program::new(rules).ground();
         assert_eq!(
             ground.into_iter().collect::<Vec<_>>(),
             vec![
-                nrule![p(1, 2)].ground_new(),
-                nrule![q(1) if p(1, 1) and not q(1)].ground_new(),
-                nrule![q(1) if p(1, 2) and not q(2)].ground_new(),
-                nrule![q(2) if p(2, 1) and not q(1)].ground_new(),
-                nrule![q(2) if p(2, 2) and not q(2)].ground_new(),
+                rule![p(1, 2)].ground(),
+                rule![q(1) if p(1, 1) and not q(1)].ground(),
+                rule![q(1) if p(1, 2) and not q(2)].ground(),
+                rule![q(2) if p(2, 1) and not q(1)].ground(),
+                rule![q(2) if p(2, 2) and not q(2)].ground(),
             ]
+        );
+    }
+
+    #[test]
+    fn normalize_constraint() {
+        let mut images = rule![if p and q].ground().image();
+        assert_eq!(images.len(), 1);
+        assert_eq!(images.remove(0).normalize(), [nrule![if (p) and (q)]]);
+    }
+
+    #[test]
+    fn normalize_choice() {
+        let mut images = rule![{ p }].ground().image();
+        assert_eq!(images.len(), 1);
+        assert_eq!(images.remove(0).normalize(), [nrule![(p) or (not p)]]);
+    }
+
+    #[test]
+    fn normalize_choices() {
+        let mut images = rule![{p or q or r}].ground().image();
+        assert_eq!(images.len(), 3);
+        assert_eq!(images.remove(2).normalize(), [nrule![(r) or (not r)]]);
+        assert_eq!(images.remove(1).normalize(), [nrule![(q) or (not q)]]);
+        assert_eq!(images.remove(0).normalize(), [nrule![(p) or (not p)]]);
+    }
+
+    #[test]
+    fn shift_disjunctive_rule() {
+        let n = nrule![(a) or (b) or (c) if (d) and (e)];
+        assert_eq!(
+            n.shift(),
+            [
+                srule![a if (d) and (e) and (not b) and (not c)],
+                srule![b if (d) and (e) and (not a) and (not c)],
+                srule![c if (d) and (e) and (not a) and (not b)]
+            ]
+        );
+    }
+
+    #[test]
+    fn shift_head_negation() {
+        assert_eq!(nrule![(not q)].shift(), vec![srule![if (not not q)]]);
+        assert_eq!(
+            nrule![(p) or (not q)].shift(),
+            vec![srule![p if (not not q)]]
+        );
+    }
+
+    #[test]
+    fn shift_double_head_negation() {
+        assert_eq!(nrule![(not not q)].shift(), vec![srule![if (not q)]]);
+        assert_eq!(
+            nrule![(p) or (not not q)].shift(),
+            vec![srule![p if (not q)]]
         );
     }
 
     #[test]
     fn complete_trivial_0() {
         let rules = [rule![p]];
-        let program = Program::new(rules).normalize().ground_new().complete();
-        assert_eq!(
-            program.into_iter().collect::<Vec<_>>(),
-            [constraint![p iff ()]]
-        );
+        let complete = Program::new(rules).preprocess();
+        assert_eq!(complete.into_iter().collect::<Vec<_>>(), [crule![p iff ()]]);
     }
 
     #[test]
     fn complete_trivial_1() {
         let rules = [rule![a if b]];
-        let program = Program::new(rules).normalize().ground_new().complete();
+        let complete = Program::new(rules).preprocess();
         assert_eq!(
-            program.into_iter().collect::<Vec<_>>(),
-            [constraint![a iff (b)]]
+            complete.into_iter().collect::<Vec<_>>(),
+            [crule![a iff ((b))]]
         );
     }
 
     #[test]
     fn complete_constraint() {
         let rules = [rule![if p and q]];
-        let program = Program::new(rules).normalize().ground_new().complete();
+        let complete = Program::new(rules).preprocess();
         assert_eq!(
-            program.into_iter().collect::<Vec<_>>(),
-            [constraint![iff (p and q)]]
+            complete.into_iter().collect::<Vec<_>>(),
+            [crule![iff ((p) and (q))]]
         );
     }
 
-    #[test]
-    fn complete_interval() {
-        let rules = [rule![p(0..9)], rule![p(10)]];
-        let program = Program::new(rules).normalize().ground_new().complete();
-        assert_eq!(
-            program.into_iter().collect::<Vec<_>>(),
-            vec![
-                constraint![p(0) iff ()],
-                constraint![p(1) iff ()],
-                constraint![p(2) iff ()],
-                constraint![p(3) iff ()],
-                constraint![p(4) iff ()],
-                constraint![p(5) iff ()],
-                constraint![p(6) iff ()],
-                constraint![p(7) iff ()],
-                constraint![p(8) iff ()],
-                constraint![p(9) iff ()],
-                constraint![p(10) iff ()],
-            ]
-        );
-    }
-
-    /// Dodaro example 10.
+    /// Dodaro, example 10.
     #[test]
     fn complete_dodaro_example_10() {
         let rules = [rule![a or b], rule![c or d if a]];
-        let program = Program::new(rules).normalize().ground_new();
-        assert_eq!(
-            program.iter().cloned().collect::<Vec<_>>(),
-            [
-                nrule![a if not b].ground_new(),
-                nrule![b if not a].ground_new(),
-                nrule![c if a and not d].ground_new(),
-                nrule![d if a and not c].ground_new(),
-            ]
-        );
-
-        let complete = program.complete();
+        let complete = Program::new(rules).preprocess();
         assert_eq!(
             complete.into_iter().collect::<Vec<_>>(),
             [
-                constraint![a iff (not b)],
-                constraint![b iff (not a)],
-                constraint![c iff (a and not d)],
-                constraint![d iff (a and not c)],
+                crule![a iff ((not b))],
+                crule![b iff ((not a))],
+                crule![c iff ((a) and (not d))],
+                crule![d iff ((a) and (not c))],
             ]
         );
     }
@@ -774,25 +823,13 @@ mod test {
     #[test]
     fn complete_alviano_dodaro_example_1() {
         let rules = [rule![a or b or c], rule![b if a], rule![c if not a]];
-        let program = Program::new(rules).normalize().ground_new();
-        assert_eq!(
-            program.iter().cloned().collect::<Vec<_>>(),
-            [
-                nrule![a if not b and not c].ground_new(),
-                nrule![b if not a and not c].ground_new(),
-                nrule![c if not a and not b].ground_new(),
-                nrule![b if a].ground_new(),
-                nrule![c if not a].ground_new(),
-            ]
-        );
-
-        let complete = program.complete();
+        let complete = Program::new(rules).preprocess();
         assert_eq!(
             complete.into_iter().collect::<Vec<_>>(),
             [
-                constraint![a iff (not b and not c)],
-                constraint![b iff (not a and not c) or (a)],
-                constraint![c iff (not a and not b) or (not a)],
+                crule![a iff ((not b) and (not c))],
+                crule![b iff ((not a) and (not c)) or ((a))],
+                crule![c iff ((not a) and (not b)) or ((not a))],
             ]
         );
     }
@@ -802,41 +839,41 @@ mod test {
     fn reduce_asp_5_2() {
         // Rules (5.1)-(5.4).
         let rules = [rule![p], rule![q], rule![r if p and not s], rule![s if q]];
-        let program = Program::new(rules).normalize().ground_new().complete();
+        let complete = Program::new(rules).preprocess();
         assert_eq!(
-            program.iter().cloned().collect::<Vec<_>>(),
+            complete.iter().cloned().collect::<Vec<_>>(),
             [
-                constraint![p iff ()],
-                constraint![q iff ()],
-                constraint![r iff (p and not s)],
-                constraint![s iff (q)],
+                crule![p iff ()],
+                crule![q iff ()],
+                crule![r iff ((p) and (not s))],
+                crule![s iff ((q))],
             ]
         );
 
         // Reduct (5.10).
         let interp = interp! {p, q, s};
-        let reduct = program.clone().reduce(&interp);
+        let reduct = complete.clone().reduce(&interp);
         assert_eq!(
             reduct.into_iter().collect::<Vec<_>>(),
             [
-                constraint![p iff ()],
-                constraint![q iff ()],
-                constraint![r iff],
-                constraint![s iff (q)],
+                crule![p iff ()],
+                crule![q iff ()],
+                crule![r iff],
+                crule![s iff ((q))],
             ]
         );
-        assert!(program.eval(&interp));
+        assert!(complete.eval(&interp));
 
         // Reduct (5.11).
         let interp = interp! {p, q};
-        let reduct = program.clone().reduce(&interp);
+        let reduct = complete.clone().reduce(&interp);
         assert_eq!(
             reduct.iter().cloned().collect::<Vec<_>>(),
             [
-                constraint![p iff ()],
-                constraint![q iff ()],
-                constraint![r iff (p)],
-                constraint![s iff (q)],
+                crule![p iff ()],
+                crule![q iff ()],
+                crule![r iff ((p))],
+                crule![s iff ((q))],
             ]
         );
         assert!(!reduct.eval(&interp));
@@ -845,16 +882,12 @@ mod test {
     #[test]
     fn reduce_alviano_dodaro_example_1() {
         let rules = [rule![a or b or c], rule![b if a], rule![c if not a]];
-        let program = Program::new(rules).normalize().ground_new().complete();
+        let program = Program::new(rules).preprocess();
         let interp = interp! {c};
         let reduct = program.clone().reduce(&interp);
         assert_eq!(
             reduct.into_iter().collect::<Vec<_>>(),
-            [
-                constraint![a iff],
-                constraint![b iff (a)],
-                constraint![c iff () or ()],
-            ]
+            [crule![a iff], crule![b iff ((a))], crule![c iff () or ()],]
         );
         assert!(program.eval(&interp));
     }
@@ -862,16 +895,10 @@ mod test {
     #[test]
     fn complete_excluded_middle() {
         let rules = [rule![p or not p]];
-        let ground = Program::new(rules).normalize().ground_new();
-        assert_eq!(
-            ground.iter().cloned().collect::<Vec<_>>(),
-            vec![nrule![p if not not p].ground_new()]
-        );
-
-        let complete = ground.complete();
+        let complete = Program::new(rules).preprocess();
         assert_eq!(
             complete.into_iter().collect::<Vec<_>>(),
-            [constraint![p iff (not not p)]]
+            [crule![p iff ((not not p))]]
         );
     }
 
@@ -879,19 +906,16 @@ mod test {
     #[test]
     fn reduce_excluded_middle() {
         let rules = [rule![p or not p]];
-        let program = Program::new(rules).normalize().ground_new().complete();
+        let complete = Program::new(rules).preprocess();
 
         let interp = interp! {};
-        let reduct = program.clone().reduce(&interp);
+        let reduct = complete.clone().reduce(&interp);
         assert!(reduct.eval(&interp));
-        assert_eq!(reduct.into_iter().collect::<Vec<_>>(), [constraint![p iff]]);
+        assert_eq!(reduct.into_iter().collect::<Vec<_>>(), [crule![p iff]]);
 
         let interp = interp! {p};
-        let reduct = program.clone().reduce(&interp);
+        let reduct = complete.clone().reduce(&interp);
         assert!(reduct.eval(&interp));
-        assert_eq!(
-            reduct.into_iter().collect::<Vec<_>>(),
-            [constraint![p iff ()]]
-        );
+        assert_eq!(reduct.into_iter().collect::<Vec<_>>(), [crule![p iff ()]]);
     }
 }
