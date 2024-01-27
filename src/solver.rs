@@ -149,7 +149,7 @@ where
     T: Ord,
     C: Ord,
 {
-    /// The given items, in the given order.
+    /// The given items, with primary items sorted ahead of secondary ones.
     /// Item ids are assigned by their position here.
     items: Items<T, C>,
 
@@ -277,9 +277,7 @@ where
         loop {
             if let Some((item, option)) = self.choose(state) {
                 self.cover(item, option, state)?;
-                if state.active_items.is_empty()
-                    || state.active_items.iter().all(|&i| self.is_secondary(i))
-                {
+                if state.active_items.is_empty() {
                     return Ok(self.decode_solution(&state.solution));
                 }
             } else if !self.backtrack(state) {
@@ -520,6 +518,7 @@ struct DanceState {
 /// Owns all of the mutable search state and drives the search via
 /// a shared reference to the solver, but implements no search logic
 /// other than "stop when no more solutions are available".
+#[derive(Debug)]
 pub struct DanceStep<'a, T, C>
 where
     T: Ord + Clone + fmt::Debug + fmt::Display,
@@ -567,11 +566,11 @@ mod test {
     }
 
     macro_rules! items {
-        [$($i:ident$(:$c:ident)?),*] => { vec![$(item![$i$(:$c)?]),*] };
+        [$($i:ident$(:$c:ident)?),* $(,)?] => { vec![$(item![$i$(:$c)?]),*] };
     }
 
     macro_rules! solutions {
-        ($([$([$($option:tt)*]),*]),*) => { vec![$(vec![$(items![$($option)*]),*]),*] };
+        ($([$([$($option:tt)*]),* $(,)?]),* $(,)?) => { vec![$(vec![$(items![$($option)*]),*]),*] };
     }
 
     /// Detect invalid problems.
