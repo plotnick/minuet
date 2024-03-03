@@ -14,9 +14,10 @@ mod solver;
 mod values;
 
 use compiler::{XccCompiler, XccError};
+use tracer::Trace;
 
 fn main() -> Result<(), XccError<String, String>> {
-    let xcc = XccCompiler::new(vec![], true).unwrap();
+    let xcc = XccCompiler::new(vec![], Trace::all()).unwrap();
     let _solutions = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
     Ok(())
 }

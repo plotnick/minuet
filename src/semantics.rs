@@ -11,11 +11,12 @@ use crate::formula::{Bindings, Formula, Groundable, Interpretation, Names, Unive
 use crate::generate::combinations_mixed;
 use crate::image::{Context, PropositionalImage as _};
 use crate::syntax::*;
+use crate::tracer::Trace;
 
 /// A program is a collection of rules, which we'll preprocess prior to
 /// compilation in a strict sequence of meaning-preserving steps. Each
 /// step generates a new (potentially exponentially larger) program of a
-/// different type. There is a unique method of zero arguments arguments
+/// different type. There is a unique method of one argument (trace level)
 /// on each program type that advances to the next step; e.g., `ground`,
 /// `image`, `normalize`, `shift`, `complete`.
 #[derive(Clone, Debug)]
@@ -86,8 +87,19 @@ where
 impl Program<BaseRule<Term>> {
     /// A convenience method to "skip to the end": run through each
     /// preprocessing step in sequence and return the result.
-    pub fn preprocess(self) -> Program<CompleteRule> {
-        self.ground().image().normalize().shift().complete()
+    pub fn preprocess(self, trace: Trace) -> Program<CompleteRule> {
+        self.ground_with_trace(trace)
+            .image(trace)
+            .normalize(trace)
+            .shift(trace)
+            .complete(trace)
+    }
+
+    pub fn ground_with_trace(self, trace: Trace) -> Program<BaseRule<GroundTerm>> {
+        trace!(trace, Preprocess, "Base program:\n{self}");
+        let grounded = self.ground();
+        trace!(trace, Preprocess, "Grounded program:\n{grounded}");
+        grounded
     }
 }
 
@@ -248,8 +260,10 @@ impl Groundable for Rule<Term> {
 impl Program<BaseRule<GroundTerm>> {
     /// The next step in program preprocessing is finding the propositional
     /// image of each rule.
-    pub fn image(self) -> Program<PropositionalRule> {
-        Program::new(self.into_iter().flat_map(BaseRule::<GroundTerm>::image))
+    pub fn image(self, trace: Trace) -> Program<PropositionalRule> {
+        let image = Program::new(self.into_iter().flat_map(BaseRule::<GroundTerm>::image));
+        trace!(trace, Preprocess, "Propositional image:\n{image}");
+        image
     }
 }
 
@@ -292,8 +306,10 @@ impl Program<PropositionalRule> {
     /// The next preprocessing step is normalization, where we bring the head
     /// and body into a canonical form. See "ASP" and Lifschitz & Tang (1999),
     /// "Nested Expressions in Logic Programs".
-    pub fn normalize(self) -> Program<NormalRule> {
-        Program::new(self.into_iter().flat_map(PropositionalRule::normalize))
+    pub fn normalize(self, trace: Trace) -> Program<NormalRule> {
+        let normalized = Program::new(self.into_iter().flat_map(PropositionalRule::normalize));
+        trace!(trace, Preprocess, "Normalized program:\n{normalized}");
+        normalized
     }
 }
 
@@ -397,8 +413,10 @@ impl Program<NormalRule> {
     /// The penultimate program preprocessing step is shifting, wherein we
     /// produce a set of rules with at most one positive atom for a head;
     /// see Lifschitz, "ASP" §5.8 and Dodaro definition 10.
-    pub fn shift(self) -> Program<ShiftedRule> {
-        Program::new(self.into_iter().flat_map(NormalRule::shift))
+    pub fn shift(self, trace: Trace) -> Program<ShiftedRule> {
+        let shifted = Program::new(self.into_iter().flat_map(NormalRule::shift));
+        trace!(trace, Preprocess, "Shifted program:\n{shifted}");
+        shifted
     }
 }
 
@@ -486,7 +504,7 @@ impl Program<ShiftedRule> {
     /// The last preprocessing step prior to compilation and solving is
     /// called _Clark's completion_. It turns each implication into an
     /// equivalence; see Lifschitz, "ASP" §5.9 and Dodaro §3.3.
-    pub fn complete(self) -> Program<CompleteRule> {
+    pub fn complete(self, trace: Trace) -> Program<CompleteRule> {
         // Which rules' heads contain a given atom.
         let mut heads = BTreeMap::<Atom<GroundTerm>, BTreeSet<usize>>::new();
         for (i, rule) in self.iter().enumerate() {
@@ -519,7 +537,9 @@ impl Program<ShiftedRule> {
         }
         // TODO: if !atoms.is_empty() { trace: atoms unused in any head }
 
-        Program::new(rules)
+        let completed = Program::new(rules);
+        trace!(trace, Preprocess, "Completed program:\n{completed}");
+        completed
     }
 }
 
@@ -779,14 +799,14 @@ mod test {
     #[test]
     fn complete_trivial_0() {
         let rules = [rule![p]];
-        let complete = Program::new(rules).preprocess();
+        let complete = Program::new(rules).preprocess(Trace::none());
         assert_eq!(complete.into_iter().collect::<Vec<_>>(), [crule![p iff ()]]);
     }
 
     #[test]
     fn complete_trivial_1() {
         let rules = [rule![a if b]];
-        let complete = Program::new(rules).preprocess();
+        let complete = Program::new(rules).preprocess(Trace::none());
         assert_eq!(
             complete.into_iter().collect::<Vec<_>>(),
             [crule![a iff ((b))]]
@@ -796,7 +816,7 @@ mod test {
     #[test]
     fn complete_constraint() {
         let rules = [rule![if p and q]];
-        let complete = Program::new(rules).preprocess();
+        let complete = Program::new(rules).preprocess(Trace::none());
         assert_eq!(
             complete.into_iter().collect::<Vec<_>>(),
             [crule![iff ((p) and (q))]]
@@ -807,7 +827,7 @@ mod test {
     #[test]
     fn complete_dodaro_example_10() {
         let rules = [rule![a or b], rule![c or d if a]];
-        let complete = Program::new(rules).preprocess();
+        let complete = Program::new(rules).preprocess(Trace::none());
         assert_eq!(
             complete.into_iter().collect::<Vec<_>>(),
             [
@@ -823,7 +843,7 @@ mod test {
     #[test]
     fn complete_alviano_dodaro_example_1() {
         let rules = [rule![a or b or c], rule![b if a], rule![c if not a]];
-        let complete = Program::new(rules).preprocess();
+        let complete = Program::new(rules).preprocess(Trace::none());
         assert_eq!(
             complete.into_iter().collect::<Vec<_>>(),
             [
@@ -839,7 +859,7 @@ mod test {
     fn reduce_asp_5_2() {
         // Rules (5.1)-(5.4).
         let rules = [rule![p], rule![q], rule![r if p and not s], rule![s if q]];
-        let complete = Program::new(rules).preprocess();
+        let complete = Program::new(rules).preprocess(Trace::none());
         assert_eq!(
             complete.iter().cloned().collect::<Vec<_>>(),
             [
@@ -882,7 +902,7 @@ mod test {
     #[test]
     fn reduce_alviano_dodaro_example_1() {
         let rules = [rule![a or b or c], rule![b if a], rule![c if not a]];
-        let program = Program::new(rules).preprocess();
+        let program = Program::new(rules).preprocess(Trace::none());
         let interp = interp! {c};
         let reduct = program.clone().reduce(&interp);
         assert_eq!(
@@ -895,7 +915,7 @@ mod test {
     #[test]
     fn complete_excluded_middle() {
         let rules = [rule![p or not p]];
-        let complete = Program::new(rules).preprocess();
+        let complete = Program::new(rules).preprocess(Trace::none());
         assert_eq!(
             complete.into_iter().collect::<Vec<_>>(),
             [crule![p iff ((not not p))]]
@@ -906,7 +926,7 @@ mod test {
     #[test]
     fn reduce_excluded_middle() {
         let rules = [rule![p or not p]];
-        let complete = Program::new(rules).preprocess();
+        let complete = Program::new(rules).preprocess(Trace::none());
 
         let interp = interp! {};
         let reduct = complete.clone().reduce(&interp);

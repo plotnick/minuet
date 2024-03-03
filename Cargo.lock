@@ -3,6 +3,16 @@
 version = 3
 
 [[package]]
+name = "bitmask-enum"
+version = "2.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9990737a6d5740ff51cdbbc0f0503015cb30c390f6623968281eb214a520cfc0"
+dependencies = [
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "gray-codes"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12,6 +22,7 @@ checksum = "a8eb53f38e7f2e30ad98faf6a15a3b1135c45a1b9740f71fba53438437bf2a25"
 name = "minuet"
 version = "0.0.0"
 dependencies = [
+ "bitmask-enum",
  "gray-codes",
  "thiserror",
 ]

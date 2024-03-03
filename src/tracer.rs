@@ -1,10 +1,18 @@
 //! A trivial tracing facility.
 
-pub type Trace = bool;
+use bitmask_enum::bitmask;
+
+#[bitmask]
+pub enum Trace {
+    All,
+    Compile,
+    Preprocess,
+    Solve,
+}
 
 macro_rules! trace {
-    ($trace:expr, $fmt:literal $(,)? $($arg:expr),* $(,)?) => {
-        if $trace {
+    ($trace:expr, $level:ident, $fmt:literal $(,)? $($arg:expr),* $(,)?) => {
+        if $trace.intersects(Trace::$level) {
             eprintln!($fmt, $($arg),*);
         }
     }

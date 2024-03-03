@@ -170,7 +170,7 @@ where
     /// Determines which items are considered primary.
     second: usize,
 
-    /// Whether or not to log status messages to standard error.
+    /// Status messages to print to standard error.
     trace: Trace,
 }
 
@@ -363,7 +363,8 @@ where
     ) -> Result<(), XccError<T, C>> {
         trace!(
             self.trace,
-            "** Covering item {} with option {}",
+            Solve,
+            "Covering item {} with option {}",
             self.format_item(item),
             self.format_option(option),
         );
@@ -447,7 +448,8 @@ where
     fn trace_state(&self, when: &'static str, items: &ActiveItems, options: &ActiveOptions) {
         trace!(
             self.trace,
-            "** Active items {when}: {{{}}}; options {{{}}}",
+            Solve,
+            "Active items {when}: {{{}}}; options {{{}}}",
             items
                 .iter()
                 .map(|&i| self.format_item(i))
@@ -476,7 +478,8 @@ where
     pub fn trace_solution(&self, solution: &Solution) {
         trace!(
             self.trace,
-            "* Got a solution: {}",
+            Solve,
+            "Got a solution: {}",
             solution
                 .iter()
                 .map(|&o| self.format_option(o))
@@ -557,7 +560,7 @@ where
 mod test {
     use std::collections::BTreeSet;
 
-    use super::{DancingCells, Item, Options, XccError};
+    use super::*;
 
     macro_rules! item {
         [$i:ident] => { Item::Primary::<&str, &str>(stringify!($i)) };
@@ -577,17 +580,21 @@ mod test {
     #[test]
     fn invalid_xcc() {
         assert!(matches!(
-            DancingCells::new(vec![], vec![items![a]], false),
+            DancingCells::new(vec![], vec![items![a]], Trace::none()),
             Err(XccError::UndeclaredItem(item![a]))
         ));
 
         assert!(matches!(
-            DancingCells::new(vec![item![a]], vec![items![a, a]], false),
+            DancingCells::new(vec![item![a]], vec![items![a, a]], Trace::none()),
             Err(XccError::PrimaryItemUsedTwice(item![a], _))
         ));
 
         assert!(matches!(
-            DancingCells::new(items![a, x:None], vec![items![a, x, x:X, x:Y]], false),
+            DancingCells::new(
+                items![a, x:None],
+                vec![items![a, x, x:X, x:Y]],
+                Trace::none()
+            ),
             Err(XccError::SecondaryItemInconsistentlyColored(
                 item![x:None],
                 _
@@ -599,7 +606,7 @@ mod test {
     fn trivial_xc_0() {
         let items = vec![];
         let options = vec![];
-        let solver = DancingCells::<&str, &str>::new(items, options, false).unwrap();
+        let solver = DancingCells::<&str, &str>::new(items, options, Trace::none()).unwrap();
         let solutions = solver.solve().collect::<Result<Vec<_>, _>>().unwrap();
         assert!(solutions.is_empty());
     }
@@ -608,7 +615,7 @@ mod test {
     fn trivial_xc_1a() {
         let items = items![a, b];
         let options = vec![items![a]]; // b is unused, so can't be covered
-        let solver = DancingCells::<&str, &str>::new(items, options, false).unwrap();
+        let solver = DancingCells::<&str, &str>::new(items, options, Trace::none()).unwrap();
         let solutions = solver.solve().collect::<Result<Vec<_>, _>>().unwrap();
         assert!(solutions.is_empty());
     }
@@ -617,7 +624,7 @@ mod test {
     fn trivial_xc_1b() {
         let items = items![a];
         let options = vec![items![a]];
-        let solver = DancingCells::<&str, &str>::new(items, options, false).unwrap();
+        let solver = DancingCells::<&str, &str>::new(items, options, Trace::none()).unwrap();
         let solutions = solver.solve().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(solutions, solutions!([[a]]));
     }
@@ -626,7 +633,7 @@ mod test {
     fn trivial_xc_2() {
         let items = items![a, b];
         let options = vec![items![a], items![b]];
-        let solver = DancingCells::<&str, &str>::new(items, options, false).unwrap();
+        let solver = DancingCells::<&str, &str>::new(items, options, Trace::none()).unwrap();
         let solutions = solver.solve().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(solutions, solutions!([[a], [b]]));
     }
@@ -635,7 +642,7 @@ mod test {
     fn trivial_xc_3() {
         let items = items![a, b];
         let options = vec![items![a], items![b], items![a, b]];
-        let solver = DancingCells::<&str, &str>::new(items, options, false).unwrap();
+        let solver = DancingCells::<&str, &str>::new(items, options, Trace::none()).unwrap();
         let solutions = solver.solve().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(solutions, solutions!([[a], [b]], [[a, b]]));
     }
@@ -652,7 +659,7 @@ mod test {
             items![b, g],
             items![d, e, g],
         ];
-        let solver = DancingCells::<&str, &str>::new(items, options, false).unwrap();
+        let solver = DancingCells::<&str, &str>::new(items, options, Trace::none()).unwrap();
         let solutions = solver.solve().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(solutions, solutions!([[a, d, f], [b, g], [c, e]]));
     }
@@ -668,7 +675,7 @@ mod test {
             items![q, x:A],
             items![r, y:B],
         ];
-        let solver = DancingCells::<&str, &str>::new(items, options, false).unwrap();
+        let solver = DancingCells::<&str, &str>::new(items, options, Trace::none()).unwrap();
         let solutions = solver.solve().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(solutions, solutions!([[q, x:A], [p, r, x:A, y]]));
     }
@@ -696,7 +703,7 @@ mod test {
             .map(|x| x.into_iter().cloned().collect::<Vec<_>>())
             .collect::<Vec<_>>();
 
-        let xxc = DancingCells::new(items.clone(), options, false).unwrap();
+        let xxc = DancingCells::new(items.clone(), options, Trace::none()).unwrap();
         let mut i = 0;
         let mut uniq = BTreeSet::<Options<u8, u8>>::new();
         for result in xxc.solve() {
