@@ -33,6 +33,7 @@ use std::collections::BTreeSet;
 use gray_codes::{InclusionExclusion, SetMutation};
 
 use crate::formula::*;
+use crate::ground::*;
 use crate::semantics::*;
 use crate::solver::*;
 use crate::syntax::*;

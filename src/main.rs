@@ -8,6 +8,7 @@ mod compiler;
 mod domain;
 mod formula;
 mod generate;
+mod ground;
 mod image;
 mod semantics;
 mod solver;

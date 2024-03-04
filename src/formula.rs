@@ -3,11 +3,11 @@
 //! evaluated as booleans with resepect to an interpretation (a set of atoms
 //! taken to be true).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use crate::clause::*;
+use crate::ground::*;
 use crate::syntax::*;
-use crate::values::Values as _;
 
 /// An interpretation is a set of atoms interpreted as true;
 /// any atom not contained in the set is interpreted as false.
@@ -18,136 +18,6 @@ pub type Interpretation = BTreeSet<Atom<GroundTerm>>;
 /// a _model_ of `f`. A model that is _minimal_ or _stable_
 /// is also called an _answer set_.
 pub type Model = Interpretation;
-
-/// Map variable names to constant values (in order to ground them).
-pub type Bindings = BTreeMap<Symbol, Constant>;
-
-/// A set of variable names (to ground).
-pub type Names = BTreeSet<Symbol>;
-
-/// The _Herbrand Universe_ is the set of all constants in a program.
-/// It is the set of values to which variables may be bound.
-pub type Universe = BTreeSet<Constant>;
-
-/// Terms that can include variables may be _grounded_, wherein we replace
-/// all variables with all possible values that can be bound to them.
-///
-/// The `Ground` associated type represents the _result_ of the grounding,
-/// e.g., we go from `Rule<Term>` → `Rule<GroundTerm>` via (mod type aliases):
-/// ```
-/// impl Groundable for Rule<Term> {
-///     type Ground = Rule<GroundTerm>;
-///     ...
-/// }
-/// ```
-pub trait Groundable {
-    type Ground;
-
-    fn is_ground(&self) -> bool;
-    fn ground_with(self, bindings: &Bindings) -> Self::Ground;
-    fn ground(self) -> Self::Ground
-    where
-        Self: Sized,
-    {
-        self.ground_with(&Bindings::new())
-    }
-    fn constants(&self, universe: &mut Universe);
-    fn variables(&self, names: &mut Names);
-}
-
-impl Groundable for Term {
-    type Ground = GroundTerm;
-
-    fn is_ground(&self) -> bool {
-        use Term::*;
-        match self {
-            Constant(_) => true,
-            Variable(_) => false,
-            Choice(p) => p.is_ground(),
-            UnaryOperation(_op, x) => x.is_ground(),
-            BinaryOperation(x, _op, y) => x.is_ground() && y.is_ground(),
-        }
-    }
-
-    fn ground_with(self, bindings: &Bindings) -> GroundTerm {
-        match self {
-            Term::Constant(c) => GroundTerm::Constant(c),
-            Term::Choice(p) => GroundTerm::Choice(p.ground_with(bindings)),
-            Term::Variable(name) => GroundTerm::Constant(bindings[&name].clone()),
-            Term::UnaryOperation(op, x) => GroundTerm::unary_operation(op, x.ground_with(bindings)),
-            Term::BinaryOperation(x, op, y) => {
-                GroundTerm::binary_operation(x.ground_with(bindings), op, y.ground_with(bindings))
-            }
-        }
-    }
-
-    fn constants(&self, universe: &mut Universe) {
-        use Term::*;
-        match self {
-            Constant(c) => universe.extend([c.clone()]),
-            Choice(c) => c.constants(universe),
-            Variable(..) | BinaryOperation(..) | UnaryOperation(..) => (),
-        }
-    }
-
-    fn variables(&self, names: &mut Names) {
-        if let Term::Variable(v) = self {
-            names.insert(v.clone());
-        }
-    }
-}
-
-impl Groundable for Pool<Term> {
-    type Ground = Pool<GroundTerm>;
-
-    fn is_ground(&self) -> bool {
-        use Pool::*;
-        match self {
-            Interval(start, end) => start.is_ground() && end.is_ground(),
-            Set(terms) => terms.iter().all(|t| t.is_ground()),
-        }
-    }
-
-    fn ground_with(self, bindings: &Bindings) -> Self::Ground {
-        use Pool::*;
-        match self {
-            Interval(start, end) => {
-                Self::Ground::interval(start.ground_with(bindings), end.ground_with(bindings))
-            }
-            Set(terms) => Self::Ground::set(terms.into_iter().map(|t| t.ground_with(bindings))),
-        }
-    }
-
-    fn constants(&self, universe: &mut Universe) {
-        use Pool::*;
-        match self {
-            Interval(i, j) if i.is_ground() && j.is_ground() => {
-                universe.extend(self.clone().ground().values())
-            }
-            Interval(i, j) => todo!("insufficiently instantiated interval {i}..{j}"),
-            Set(terms) => {
-                for term in terms {
-                    term.constants(universe);
-                }
-            }
-        }
-    }
-
-    fn variables(&self, names: &mut Names) {
-        use Pool::*;
-        match self {
-            Interval(start, end) => {
-                start.variables(names);
-                end.variables(names);
-            }
-            Set(terms) => {
-                for term in terms {
-                    term.variables(names);
-                }
-            }
-        }
-    }
-}
 
 /// Evaluate a ground formula with respect to an interpretation (a set
 /// of atoms taken as true); i.e., ask "is this interpretation a model
@@ -228,124 +98,6 @@ impl Formula for Atom<GroundTerm> {
     }
 }
 
-/// Auxiliary atoms are already ground.
-impl Groundable for Auxiliary {
-    type Ground = Auxiliary;
-
-    fn is_ground(&self) -> bool {
-        true
-    }
-    fn ground_with(self, _: &Bindings) -> Self::Ground {
-        self
-    }
-    fn constants(&self, _: &mut Universe) {}
-    fn variables(&self, _: &mut Names) {}
-}
-
-impl Groundable for Aggregate<Term> {
-    type Ground = Aggregate<GroundTerm>;
-
-    /// An aggregate is ground if all of its choices are ground.
-    fn is_ground(&self) -> bool {
-        self.choices.iter().all(|choice| choice.is_ground())
-    }
-
-    fn ground_with(self, bindings: &Bindings) -> Self::Ground {
-        Self::Ground {
-            choices: self
-                .choices
-                .into_iter()
-                .map(|choice| choice.ground_with(bindings))
-                .collect(),
-        }
-    }
-
-    fn constants(&self, universe: &mut Universe) {
-        for choice in &self.choices {
-            choice.constants(universe);
-        }
-    }
-
-    fn variables(&self, names: &mut Names) {
-        for choice in &self.choices {
-            choice.variables(names);
-        }
-    }
-}
-
-impl Groundable for Application<Term> {
-    type Ground = Application<GroundTerm>;
-
-    /// A predicate application is ground if all of its arguments are ground.
-    /// An arity 0 predicate is therefore always ground.
-    fn is_ground(&self) -> bool {
-        self.arguments.iter().all(|arg| arg.is_ground())
-    }
-
-    fn ground_with(self, bindings: &Bindings) -> Self::Ground {
-        Self::Ground {
-            predicate: self.predicate,
-            arguments: self
-                .arguments
-                .into_iter()
-                .map(|arg| arg.ground_with(bindings))
-                .collect(),
-        }
-    }
-
-    fn constants(&self, universe: &mut Universe) {
-        for arg in &self.arguments {
-            arg.constants(universe);
-        }
-    }
-
-    fn variables(&self, names: &mut Names) {
-        for arg in &self.arguments {
-            arg.variables(names);
-        }
-    }
-}
-
-impl Groundable for Atom<Term> {
-    type Ground = Atom<GroundTerm>;
-
-    fn is_ground(&self) -> bool {
-        use Atom::*;
-        match self {
-            Aux(..) => true,
-            Agg(agg) => agg.is_ground(),
-            App(app) => app.is_ground(),
-        }
-    }
-
-    fn ground_with(self, bindings: &Bindings) -> Self::Ground {
-        use Atom::*;
-        match self {
-            Aux(aux) => Self::Ground::Aux(aux.ground_with(bindings)),
-            Agg(agg) => Self::Ground::Agg(agg.ground_with(bindings)),
-            App(app) => Self::Ground::App(app.ground_with(bindings)),
-        }
-    }
-
-    fn constants(&self, universe: &mut Universe) {
-        use Atom::*;
-        match self {
-            Aux(aux) => aux.constants(universe),
-            Agg(agg) => agg.constants(universe),
-            App(app) => app.constants(universe),
-        }
-    }
-
-    fn variables(&self, names: &mut Names) {
-        use Atom::*;
-        match self {
-            Aux(aux) => aux.variables(names),
-            Agg(agg) => agg.variables(names),
-            App(app) => app.variables(names),
-        }
-    }
-}
-
 impl Formula for Literal<GroundTerm> {
     fn atoms(&self, interp: &mut Interpretation) {
         use Literal::*;
@@ -370,52 +122,6 @@ impl Formula for Literal<GroundTerm> {
             Negative(a) => !interp.contains(a),
             DoubleNegative(a) => !!interp.contains(a),
             Relation(x, rel, y) => rel.eval(x, y),
-        }
-    }
-}
-
-impl Groundable for Literal<Term> {
-    type Ground = Literal<GroundTerm>;
-
-    fn is_ground(&self) -> bool {
-        use Literal::*;
-        match self {
-            Positive(a) | Negative(a) | DoubleNegative(a) => a.is_ground(),
-            Relation(x, _rel, y) => x.is_ground() && y.is_ground(),
-        }
-    }
-
-    fn ground_with(self, bindings: &Bindings) -> Self::Ground {
-        use Literal::*;
-        match self {
-            Positive(a) => Positive(a.ground_with(bindings)),
-            Negative(a) => Negative(a.ground_with(bindings)),
-            DoubleNegative(a) => DoubleNegative(a.ground_with(bindings)),
-            Relation(x, rel, y) => {
-                Literal::relation(x.ground_with(bindings), rel, y.ground_with(bindings))
-            }
-        }
-    }
-
-    fn constants(&self, universe: &mut Universe) {
-        use Literal::*;
-        match self {
-            Positive(a) | Negative(a) | DoubleNegative(a) => a.constants(universe),
-            Relation(x, _rel, y) => {
-                x.constants(universe);
-                y.constants(universe);
-            }
-        }
-    }
-
-    fn variables(&self, names: &mut Names) {
-        use Literal::*;
-        match self {
-            Positive(a) | Negative(a) | DoubleNegative(a) => a.variables(names),
-            Relation(x, _rel, y) => {
-                x.variables(names);
-                y.variables(names);
-            }
         }
     }
 }

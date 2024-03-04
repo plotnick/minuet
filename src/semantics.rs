@@ -7,8 +7,8 @@ use std::fmt;
 use std::ops::Index;
 
 use crate::clause::{Clause, Conjunction, Disjunction, Dnf};
-use crate::formula::{Bindings, Formula, Groundable, Interpretation, Names, Universe};
-use crate::generate::combinations_mixed;
+use crate::formula::{Formula, Interpretation};
+use crate::ground::{GroundTerm, Groundable as _};
 use crate::image::{Context, PropositionalImage as _};
 use crate::syntax::*;
 use crate::tracer::Trace;
@@ -88,178 +88,27 @@ impl Program<BaseRule<Term>> {
     /// A convenience method to "skip to the end": run through each
     /// preprocessing step in sequence and return the result.
     pub fn preprocess(self, trace: Trace) -> Program<CompleteRule> {
-        self.ground_with_trace(trace)
+        trace!(trace, Preprocess, "Base program:\n{self}");
+        self.ground_program(trace)
             .image(trace)
             .normalize(trace)
             .shift(trace)
             .complete(trace)
     }
 
-    pub fn ground_with_trace(self, trace: Trace) -> Program<BaseRule<GroundTerm>> {
-        trace!(trace, Preprocess, "Base program:\n{self}");
+    /// The first step in program preprocessing is grounding: replace
+    /// all terms over variables with ground (variable-free) terms.
+    /// See the `Groundable` trait for details.
+    pub fn ground_program(self, trace: Trace) -> Program<BaseRule<GroundTerm>> {
         let grounded = self.ground();
         trace!(trace, Preprocess, "Grounded program:\n{grounded}");
         grounded
     }
 }
 
-impl Groundable for Program<BaseRule<Term>> {
-    type Ground = Program<BaseRule<GroundTerm>>;
-
-    fn is_ground(&self) -> bool {
-        self.iter().all(|rule| rule.is_ground())
-    }
-
-    /// The first step in program preprocessing is grounding: find all
-    /// constants, and bind all variables to them in all possible ways.
-    /// The zero-argument step method is `ground`, which punts to this.
-    /// TODO: less naïve grounding strategy, inject initial bindings.
-    fn ground_with(self, _bindings: &Bindings) -> Self::Ground {
-        let mut constants = Universe::new();
-        self.constants(&mut constants);
-        let constants = constants.into_iter().collect::<Vec<Constant>>();
-
-        let mut variables = Names::new();
-        self.variables(&mut variables);
-        let variables = variables.into_iter().collect::<Vec<Symbol>>();
-
-        let (ground_rules, var_rules): (Vec<_>, Vec<_>) =
-            self.into_iter().partition(|r| r.is_ground());
-        let mut rules = ground_rules
-            .into_iter()
-            .map(|rule| rule.ground())
-            .collect::<Vec<_>>();
-
-        let m = constants.len();
-        let n = variables.len();
-        combinations_mixed(n, &vec![m; n], |a: &[usize]| {
-            let bindings = a
-                .iter()
-                .enumerate()
-                .map(|(i, &j)| (variables[i].clone(), constants[j].clone()))
-                .collect::<Bindings>();
-            rules.extend(
-                var_rules
-                    .iter()
-                    .cloned()
-                    .map(|rule| rule.ground_with(&bindings)),
-            );
-        });
-
-        Program::new(rules)
-    }
-
-    fn constants(&self, universe: &mut Universe) {
-        for rule in self.iter() {
-            rule.constants(universe);
-        }
-    }
-
-    fn variables(&self, names: &mut Names) {
-        for rule in self.iter() {
-            rule.variables(names);
-        }
-    }
-}
-
-impl Groundable for BaseRule<Term> {
-    type Ground = BaseRule<GroundTerm>;
-
-    fn is_ground(&self) -> bool {
-        match self {
-            Self::Choice(rule) => rule.is_ground(),
-            Self::Disjunctive(rule) => rule.is_ground(),
-        }
-    }
-
-    fn ground_with(self, bindings: &Bindings) -> Self::Ground {
-        match self {
-            Self::Choice(rule) => Self::Ground::Choice(rule.ground_with(bindings)),
-            Self::Disjunctive(rule) => Self::Ground::Disjunctive(rule.ground_with(bindings)),
-        }
-    }
-
-    fn constants(&self, universe: &mut Universe) {
-        match self {
-            Self::Choice(rule) => rule.constants(universe),
-            Self::Disjunctive(rule) => rule.constants(universe),
-        }
-    }
-
-    fn variables(&self, names: &mut Names) {
-        match self {
-            Self::Choice(rule) => rule.variables(names),
-            Self::Disjunctive(rule) => rule.variables(names),
-        }
-    }
-}
-
-impl Groundable for ChoiceRule<Term> {
-    type Ground = ChoiceRule<GroundTerm>;
-
-    fn is_ground(&self) -> bool {
-        self.head.is_ground() && self.body.iter().all(|b| b.is_ground())
-    }
-
-    fn ground_with(self, bindings: &Bindings) -> Self::Ground {
-        Self::Ground::new(
-            self.head.ground_with(bindings),
-            self.body.into_iter().map(|b| b.ground_with(bindings)),
-        )
-    }
-
-    fn constants(&self, universe: &mut Universe) {
-        self.head.constants(universe);
-        for b in &self.body {
-            b.constants(universe);
-        }
-    }
-
-    fn variables(&self, names: &mut Names) {
-        self.head.variables(names);
-        for b in &self.body {
-            b.variables(names);
-        }
-    }
-}
-
-impl Groundable for Rule<Term> {
-    type Ground = Rule<GroundTerm>;
-
-    fn is_ground(&self) -> bool {
-        self.head.iter().all(|h| h.is_ground()) && self.body.iter().all(|b| b.is_ground())
-    }
-
-    /// Ground one rule.
-    fn ground_with(self, bindings: &Bindings) -> Self::Ground {
-        Self::Ground::new(
-            self.head.into_iter().map(|h| h.ground_with(bindings)),
-            self.body.into_iter().map(|b| b.ground_with(bindings)),
-        )
-    }
-
-    fn constants(&self, universe: &mut Universe) {
-        for h in &self.head {
-            h.constants(universe);
-        }
-        for b in &self.body {
-            b.constants(universe);
-        }
-    }
-
-    fn variables(&self, names: &mut Names) {
-        for h in &self.head {
-            h.variables(names);
-        }
-        for b in &self.body {
-            b.variables(names);
-        }
-    }
-}
-
 impl Program<BaseRule<GroundTerm>> {
     /// The next step in program preprocessing is finding the propositional
-    /// image of each rule.
+    /// image (logical formula representation) of each rule.
     pub fn image(self, trace: Trace) -> Program<PropositionalRule> {
         let image = Program::new(self.into_iter().flat_map(BaseRule::<GroundTerm>::image));
         trace!(trace, Preprocess, "Propositional image:\n{image}");

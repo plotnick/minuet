@@ -1,6 +1,7 @@
 //! Propositional images. See Lifschitz, "ASP".
 
 use crate::clause::*;
+use crate::ground::*;
 use crate::syntax::*;
 use crate::values::*;
 
@@ -111,7 +112,6 @@ impl PropositionalImage for Literal<GroundTerm> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::formula::Groundable as _;
 
     #[test]
     fn atomic_image() {

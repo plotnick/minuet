@@ -14,6 +14,7 @@ use std::iter::FromIterator;
 use std::ops;
 
 use crate::generate::combinations_mixed;
+use crate::ground::*;
 use crate::syntax::*;
 
 /// A set of constant values denoted by some term.
@@ -362,8 +363,6 @@ impl Constant {
 #[cfg(test)]
 mod test {
     use super::*;
-
-    use crate::formula::Groundable as _;
 
     macro_rules! values {
         [$($val:tt),*] => {

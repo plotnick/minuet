@@ -9,6 +9,7 @@ use std::fmt;
 use std::ops::Index;
 use std::vec;
 
+use crate::ground::*;
 use crate::syntax::*;
 
 /// Conjunction means _and_. It is spelled "∧" in propositional logic.
@@ -313,8 +314,6 @@ impl Dnf {
 #[cfg(test)]
 mod test {
     use super::*;
-
-    use crate::formula::Groundable as _;
 
     macro_rules! clause {
         [] => { Clause::t() };
