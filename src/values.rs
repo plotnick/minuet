@@ -26,6 +26,10 @@ impl ValueSet {
         Self(BTreeSet::new())
     }
 
+    pub fn contains(&self, c: &Constant) -> bool {
+        self.0.contains(c)
+    }
+
     pub fn insert(&mut self, c: Constant) {
         self.0.insert(c);
     }

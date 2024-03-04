@@ -276,11 +276,23 @@ impl fmt::Display for Auxiliary {
     }
 }
 
-/// An _aggregate atom_ represents all possible subsets of some set of values.
-/// TODO: Cardinality bounds.
+/// An _aggregate atom_ represents some subsets of a set of values.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Aggregate<T> {
     pub choices: Vec<Literal<T>>,
+    pub bounds: Option<AggregateBounds<T>>,
+}
+
+impl<T> Aggregate<T> {
+    pub fn new(
+        choices: impl IntoIterator<Item = Literal<T>>,
+        bounds: Option<AggregateBounds<T>>,
+    ) -> Self {
+        Self {
+            choices: choices.into_iter().collect(),
+            bounds,
+        }
+    }
 }
 
 impl<T> fmt::Display for Aggregate<T>
@@ -289,13 +301,39 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_fmt(format_args!(
-            "{{{}}}",
+            "{}{{{}}}{}",
+            if let Some(AggregateBounds { lower_bound, .. }) = &self.bounds {
+                format!("{lower_bound} ")
+            } else {
+                String::from("")
+            },
             self.choices
                 .iter()
                 .map(|l| l.to_string())
                 .collect::<Vec<_>>()
-                .join(" or ")
+                .join(" or "),
+            if let Some(AggregateBounds { upper_bound, .. }) = &self.bounds {
+                format!(" {upper_bound}")
+            } else {
+                String::from("")
+            },
         ))
+    }
+}
+
+/// Cardinality bounds on aggregate subsets.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct AggregateBounds<T> {
+    pub lower_bound: Box<T>,
+    pub upper_bound: Box<T>,
+}
+
+impl<T> AggregateBounds<T> {
+    pub fn new(lower_bound: T, upper_bound: T) -> Self {
+        Self {
+            lower_bound: Box::new(lower_bound),
+            upper_bound: Box::new(upper_bound),
+        }
     }
 }
 
@@ -305,6 +343,15 @@ where
 pub struct Application<T> {
     pub predicate: Symbol,
     pub arguments: Vec<T>,
+}
+
+impl<T> Application<T> {
+    pub fn new(predicate: Symbol, arguments: impl IntoIterator<Item = T>) -> Self {
+        Self {
+            predicate,
+            arguments: arguments.into_iter().collect(),
+        }
+    }
 }
 
 impl<T> fmt::Display for Application<T>
@@ -353,17 +400,15 @@ where
         Self::Aux(Auxiliary { prefix, number })
     }
 
-    pub fn agg(atoms: impl IntoIterator<Item = Literal<T>>) -> Self {
-        Self::Agg(Aggregate {
-            choices: atoms.into_iter().collect(),
-        })
+    pub fn agg(
+        choices: impl IntoIterator<Item = Literal<T>>,
+        bounds: Option<AggregateBounds<T>>,
+    ) -> Self {
+        Self::Agg(Aggregate::new(choices, bounds))
     }
 
     pub fn app(predicate: Symbol, arguments: impl IntoIterator<Item = T>) -> Self {
-        Self::App(Application {
-            predicate,
-            arguments: arguments.into_iter().collect(),
-        })
+        Self::App(Application::new(predicate, arguments))
     }
 }
 
@@ -710,7 +755,15 @@ pub(crate) mod test {
             atom![@agg [$($rest)*] [$pred] -> [$($agg)*]]
         };
 
-        [{$($agg:tt)*}] => { Atom::<Term>::agg(atom![@agg [$($agg)*] [] -> []]) };
+        // Lparse-style cardinality bounds.
+        // TODO: combinations, arbitrary comparisons.
+        [$lb:literal {$($agg:tt)*} $ub:literal] => {
+            Atom::<Term>::agg(
+                atom![@agg [$($agg)*] [] -> []],
+                Some(AggregateBounds::new(term![$lb], term![$ub]))
+            )
+        };
+        [{$($agg:tt)*}] => { Atom::<Term>::agg(atom![@agg [$($agg)*] [] -> []], None) };
         [$pred:ident($($args:tt)*)] => { Atom::<Term>::app(sym![$pred], atom![@args [$($args)*] [] -> []]) };
         [$pred:ident] => { Atom::<Term>::app(sym![$pred], vec![]) };
     }
@@ -746,22 +799,35 @@ pub(crate) mod test {
         );
         assert_eq!(
             atom![{ p }],
-            Atom::<Term>::agg([Literal::Positive(atom![p]),]),
+            Atom::<Term>::agg([Literal::Positive(atom![p])], None),
+        );
+        assert_eq!(
+            atom![10 {p or q} 100],
+            Atom::<Term>::agg(
+                [Literal::Positive(atom![p]), Literal::Positive(atom![q])],
+                Some(AggregateBounds::new(term![10], term![100]))
+            ),
         );
         assert_eq!(
             atom![{f(a) or f(b)}],
-            Atom::<Term>::agg([
-                Literal::Positive(atom![f(a)]),
-                Literal::Positive(atom![f(b)])
-            ]),
+            Atom::<Term>::agg(
+                [
+                    Literal::Positive(atom![f(a)]),
+                    Literal::Positive(atom![f(b)])
+                ],
+                None
+            ),
         );
         assert_eq!(
             atom![{f(a) or not f(b) or not not f(c)}],
-            Atom::<Term>::agg([
-                Literal::Positive(atom![f(a)]),
-                Literal::Negative(atom![f(b)]),
-                Literal::DoubleNegative(atom![f(c)])
-            ]),
+            Atom::<Term>::agg(
+                [
+                    Literal::Positive(atom![f(a)]),
+                    Literal::Negative(atom![f(b)]),
+                    Literal::DoubleNegative(atom![f(c)])
+                ],
+                None
+            ),
         );
     }
 
@@ -872,7 +938,15 @@ pub(crate) mod test {
             rule_aux![@lit @head [$($rest)*] -> [$($head)*] []]
         };
 
-        // Choice rules have a single aggregate atom as head.
+        // Choice rules have a single aggregate atom as head, and may
+        // include bounds. To dodge the combinatorics, we accept only
+        // no bounds, or both bounds.
+        [@choice [$lb:literal {$($choice:tt)*} $ub:literal  if $($body:tt)*] -> [] []] => {
+            rule_aux![@body [$($body)*] -> [] [$lb {$($choice)*} $ub]]
+        };
+        [@choice [$lb:literal {$($choice:tt)*} $ub:literal] -> [] []] => {
+            rule_aux![@body [] -> [] [$lb {$($choice)*} $ub]]
+        };
         [@choice [{$($choice:tt)*} if $($body:tt)*] -> [] []] => {
             rule_aux![@body [$($body)*] -> [] [{$($choice)*}]]
         };
@@ -880,7 +954,15 @@ pub(crate) mod test {
             rule_aux![@body [] -> [] [{$($choice)*}]]
         };
 
-        // Choice rule body base case.
+        // Choice rule body base cases.
+        [@body [] -> [$($body:tt)*] [$lb:literal {$($choice:tt)*} $ub:literal]] => {{
+            let head = match atom![$lb {$($choice)*} $ub] {
+                Atom::Agg(agg) => agg,
+                _ => unimplemented!("invalid bounded choice rule"),
+            };
+            let mut body = vec![$($body)*]; body.reverse();
+            BaseRule::Choice(ChoiceRule::new(head, body))
+        }};
         [@body [] -> [$($body:tt)*] [{$($choice:tt)*}]] => {{
             let head = match atom![{$($choice)*}] {
                 Atom::Agg(agg) => agg,
@@ -914,10 +996,24 @@ pub(crate) mod test {
 
     macro_rules! rule {
         // Top level: punt to auxiliary macro.
-        [{$($choice:tt)*} if $($body:tt)*] => { rule_aux![@choice [{$($choice)*} if $($body)*] -> [] []] };
-        [{$($choice:tt)*}] => { rule_aux![@choice [{$($choice)*}] -> [] []] };
-        [if $($body:tt)*] => { rule_aux![@body [$($body)*] -> [] []] };
-        [$($rest:tt)*] => { rule_aux![@head [$($rest)*] -> [] []] };
+        [$lb:literal {$($choice:tt)*} $ub:literal if $($body:tt)*] => {
+            rule_aux![@choice [$lb {$($choice)*} $ub if $($body)*] -> [] []]
+        };
+        [$lb:literal {$($choice:tt)*} $ub:literal] => {
+            rule_aux![@choice [$lb {$($choice)*} $ub] -> [] []]
+        };
+        [{$($choice:tt)*} if $($body:tt)*] => {
+            rule_aux![@choice [{$($choice)*} if $($body)*] -> [] []]
+        };
+        [{$($choice:tt)*}] => {
+            rule_aux![@choice [{$($choice)*}] -> [] []]
+        };
+        [if $($body:tt)*] => {
+            rule_aux![@body [$($body)*] -> [] []]
+        };
+        [$($rest:tt)*] => {
+            rule_aux![@head [$($rest)*] -> [] []]
+        };
     }
 
     // Ground variants.
@@ -976,7 +1072,8 @@ pub(crate) mod test {
             rule![{ p }],
             BaseRule::Choice(ChoiceRule::new(
                 Aggregate {
-                    choices: vec![lit![p]]
+                    choices: vec![lit![p]],
+                    bounds: None,
                 },
                 []
             ))

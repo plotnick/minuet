@@ -1,5 +1,9 @@
 //! Propositional images. See Lifschitz, "ASP".
 
+use std::collections::BTreeSet;
+
+use gray_codes::{InclusionExclusion, SetMutation};
+
 use crate::clause::*;
 use crate::ground::*;
 use crate::syntax::*;
@@ -36,16 +40,62 @@ pub trait PropositionalImage {
     fn image(self, context: Context) -> Clause;
 }
 
-/// Lifschitz, "ASP" §5.7.
 impl PropositionalImage for Aggregate<GroundTerm> {
+    /// Lifschitz, "ASP" §5.7.
     fn image(self, context: Context) -> Clause {
-        let Aggregate { choices } = self;
+        let Aggregate { choices, .. } = self;
         context.clause(
             choices
                 .into_iter()
                 .flat_map(|c| c.image(context))
                 .map(|c| Clause::or([c.clone(), c.negate()])),
         )
+    }
+}
+
+impl Aggregate<GroundTerm> {
+    /// Conjunctive constraints carrying cardinality bounds on an aggregate.
+    /// See "ASP" §5.7, "AG" §4.7.
+    pub fn bounds(self) -> Vec<Conjunction<Clause>> {
+        match self {
+            Aggregate {
+                choices,
+                bounds:
+                    Some(AggregateBounds {
+                        lower_bound,
+                        upper_bound,
+                    }),
+            } => {
+                let choices = choices
+                    .into_iter()
+                    .flat_map(|c| c.image(Context::Head))
+                    .collect::<Vec<_>>();
+                let upper_bound = upper_bound.values();
+                let lower_bound = lower_bound.values();
+                let mut formulas = BTreeSet::new();
+                let mut lower = Vec::new();
+                let mut bounds = Vec::new();
+                for mutation in InclusionExclusion::of_len(choices.len()) {
+                    match mutation {
+                        SetMutation::Insert(i) => formulas.insert(choices[i].clone()),
+                        SetMutation::Remove(i) => formulas.remove(&choices[i]),
+                    };
+                    let n = Constant::from(formulas.len() as i64);
+                    let n_minus_1 = (n.clone() - Constant::from(1)).expect("n - 1");
+                    if upper_bound.contains(&n_minus_1) {
+                        bounds.push(Conjunction::from_iter(formulas.clone()));
+                    }
+                    if lower_bound.contains(&n) {
+                        lower.push(Clause::and(formulas.clone()).negate());
+                    }
+                }
+                if !lower.is_empty() {
+                    bounds.push(Conjunction::from_iter(lower));
+                }
+                bounds
+            }
+            _ => vec![],
+        }
     }
 }
 
@@ -76,8 +126,8 @@ impl PropositionalImage for Atom<GroundTerm> {
     }
 }
 
-/// See "ASP" Tables 4.4 and 5.4.
 impl PropositionalImage for Literal<GroundTerm> {
+    /// "ASP" tables 4.4 and 5.4.
     fn image(self, context: Context) -> Clause {
         match self {
             Literal::Positive(atom) => atom.image(context),
@@ -112,6 +162,9 @@ impl PropositionalImage for Literal<GroundTerm> {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    use crate::semantics::{Program, PropositionalRule};
+    use crate::tracer::Trace;
 
     #[test]
     fn atomic_image() {
@@ -189,6 +242,182 @@ mod test {
                     Clause::Lit(lit![q(3)].ground()),
                     Clause::Lit(lit![not q(3)].ground())
                 ]),
+            ])
+        );
+    }
+
+    #[test]
+    fn asp_5_21() {
+        assert_eq!(
+            Program::new([rule![0 {p(1..2, 1..2)} 2]])
+                .ground()
+                .image(Trace::none()),
+            Program::new([
+                // (A.8)
+                PropositionalRule {
+                    head: Clause::or([
+                        Clause::Lit(glit![p(1, 1)]),
+                        Clause::Lit(glit![not p(1, 1)])
+                    ]),
+                    body: Clause::t(),
+                },
+                PropositionalRule {
+                    head: Clause::or([
+                        Clause::Lit(glit![p(1, 2)]),
+                        Clause::Lit(glit![not p(1, 2)])
+                    ]),
+                    body: Clause::t(),
+                },
+                PropositionalRule {
+                    head: Clause::or([
+                        Clause::Lit(glit![p(2, 1)]),
+                        Clause::Lit(glit![not p(2, 1)])
+                    ]),
+                    body: Clause::t(),
+                },
+                PropositionalRule {
+                    head: Clause::or([
+                        Clause::Lit(glit![p(2, 2)]),
+                        Clause::Lit(glit![not p(2, 2)])
+                    ]),
+                    body: Clause::t(),
+                },
+                // (A.9)
+                PropositionalRule {
+                    head: Clause::f(),
+                    body: Clause::and([
+                        Clause::Lit(glit![p(1, 1)]),
+                        Clause::Lit(glit![p(1, 2)]),
+                        Clause::Lit(glit![p(2, 1)])
+                    ])
+                },
+                PropositionalRule {
+                    head: Clause::f(),
+                    body: Clause::and([
+                        Clause::Lit(glit![p(1, 1)]),
+                        Clause::Lit(glit![p(2, 1)]),
+                        Clause::Lit(glit![p(2, 2)]),
+                    ])
+                },
+                PropositionalRule {
+                    head: Clause::f(),
+                    body: Clause::and([
+                        Clause::Lit(glit![p(1, 2)]),
+                        Clause::Lit(glit![p(2, 1)]),
+                        Clause::Lit(glit![p(2, 2)])
+                    ])
+                },
+                PropositionalRule {
+                    head: Clause::f(),
+                    body: Clause::and([
+                        Clause::Lit(glit![p(1, 1)]),
+                        Clause::Lit(glit![p(1, 2)]),
+                        Clause::Lit(glit![p(2, 2)])
+                    ])
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn asp_5_22() {
+        assert_eq!(
+            Program::new([rule![2 {p(1..2, 1..2)} 2]])
+                .ground()
+                .image(Trace::none()),
+            Program::new([
+                // (A.8)
+                PropositionalRule {
+                    head: Clause::or([
+                        Clause::Lit(glit![p(1, 1)]),
+                        Clause::Lit(glit![not p(1, 1)])
+                    ]),
+                    body: Clause::t(),
+                },
+                PropositionalRule {
+                    head: Clause::or([
+                        Clause::Lit(glit![p(1, 2)]),
+                        Clause::Lit(glit![not p(1, 2)])
+                    ]),
+                    body: Clause::t(),
+                },
+                PropositionalRule {
+                    head: Clause::or([
+                        Clause::Lit(glit![p(2, 1)]),
+                        Clause::Lit(glit![not p(2, 1)])
+                    ]),
+                    body: Clause::t(),
+                },
+                PropositionalRule {
+                    head: Clause::or([
+                        Clause::Lit(glit![p(2, 2)]),
+                        Clause::Lit(glit![not p(2, 2)])
+                    ]),
+                    body: Clause::t(),
+                },
+                // (A.9)
+                PropositionalRule {
+                    head: Clause::f(),
+                    body: Clause::and([
+                        Clause::Lit(glit![p(1, 1)]),
+                        Clause::Lit(glit![p(1, 2)]),
+                        Clause::Lit(glit![p(2, 1)])
+                    ])
+                },
+                PropositionalRule {
+                    head: Clause::f(),
+                    body: Clause::and([
+                        Clause::Lit(glit![p(1, 1)]),
+                        Clause::Lit(glit![p(2, 1)]),
+                        Clause::Lit(glit![p(2, 2)]),
+                    ])
+                },
+                PropositionalRule {
+                    head: Clause::f(),
+                    body: Clause::and([
+                        Clause::Lit(glit![p(1, 2)]),
+                        Clause::Lit(glit![p(2, 1)]),
+                        Clause::Lit(glit![p(2, 2)])
+                    ])
+                },
+                PropositionalRule {
+                    head: Clause::f(),
+                    body: Clause::and([
+                        Clause::Lit(glit![p(1, 1)]),
+                        Clause::Lit(glit![p(1, 2)]),
+                        Clause::Lit(glit![p(2, 2)])
+                    ])
+                },
+                // (A.10)
+                PropositionalRule {
+                    head: Clause::f(),
+                    body: Clause::and([
+                        Clause::or([
+                            Clause::Lit(glit![not p(1, 1)]),
+                            Clause::Lit(glit![not p(1, 2)]),
+                        ]),
+                        Clause::or([
+                            Clause::Lit(glit![not p(1, 2)]),
+                            Clause::Lit(glit![not p(2, 1)]),
+                        ]),
+                        Clause::or([
+                            Clause::Lit(glit![not p(1, 1)]),
+                            Clause::Lit(glit![not p(2, 1)]),
+                        ]),
+                        Clause::or([
+                            Clause::Lit(glit![not p(2, 1)]),
+                            Clause::Lit(glit![not p(2, 2)]),
+                        ]),
+                        Clause::or([
+                            Clause::Lit(glit![not p(1, 2)]),
+                            Clause::Lit(glit![not p(2, 2)]),
+                        ]),
+                        Clause::or([
+                            Clause::Lit(glit![not p(1, 1)]),
+                            Clause::Lit(glit![not p(2, 2)]),
+                        ]),
+                    ])
+                },
             ])
         );
     }

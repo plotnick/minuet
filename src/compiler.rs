@@ -363,7 +363,7 @@ mod test {
         ($answers:expr, [$({$($head:ident$(($($arg:tt),*))?),* $(,)?}),* $(,)?]) => {{
             let expected = [$(answer_set!{$($head$(($($arg),*))?),*}),*];
             assert!($answers == expected,
-                    "Expected answer sets:\n  {{{}}}\nGot answer sets:\n  {{{}}}",
+                    "Expected answer sets:\n  [{}]\nGot answer sets:\n  [{}]",
                     expected.iter().map(format_answer).collect::<Vec<_>>().join(", "),
                     $answers.iter().map(format_answer).collect::<Vec<_>>().join(", "));
         }}
@@ -821,6 +821,75 @@ mod test {
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{ p(a), q(a) }, { p(a) }]);
+    }
+
+    #[test]
+    fn asp_5_21() {
+        let rules = [rule![0 {p(1..2, 1..2)} 2]];
+        let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [
+            {},
+            {p(2, 2)},
+            {p(2, 1), p(2, 2)},
+            {p(2, 1)},
+            {p(1, 2), p(2, 1)},
+            {p(1, 2)},
+            {p(1, 2), p(2, 2)},
+            {p(1, 1), p(1, 2)},
+            {p(1, 1)},
+            {p(1, 1), p(2, 2)},
+            {p(1, 1), p(2, 1)},
+        ]);
+    }
+
+    #[test]
+    fn asp_5_22() {
+        let rules = [rule![2 {p(1..2, 1..2)} 2]];
+        let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [
+            {p(2, 1), p(2, 2)},
+            {p(1, 2), p(2, 2)},
+            {p(1, 2), p(2, 1)},
+            {p(1, 1), p(2, 1)},
+            {p(1, 1), p(2, 2)},
+            {p(1, 1), p(1, 2)},
+        ]);
+    }
+
+    #[test]
+    fn asp_5_23() {
+        // Example program (5.43).
+        let rules = [
+            rule![letter(a)],
+            rule![letter(b)],
+            rule![1 {p(X, 1..2)} 1 if letter(X)],
+        ];
+
+        let xcc = XccCompiler::new(rules.clone(), Trace::none()).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [
+            {letter(a), letter(b), p(a, 1), p(b, 1)},
+            {letter(a), letter(b), p(a, 1), p(b, 2)},
+            {letter(a), letter(b), p(a, 2), p(b, 2)},
+            {letter(a), letter(b), p(a, 2), p(b, 1)},
+        ]);
+
+        // Exercise 5.23.
+        let ext_rules = rules.into_iter().chain([rule![{ p(c, 1) }]]);
+        let xcc = XccCompiler::new(ext_rules, Trace::none()).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [
+            {letter(a), letter(b), p(a, 1), p(b, 1)},
+            {letter(a), letter(b), p(a, 1), p(b, 1), p(c, 1)},
+            {letter(a), letter(b), p(a, 1), p(b, 2), p(c, 1)},
+            {letter(a), letter(b), p(a, 1), p(b, 2)},
+            {letter(a), letter(b), p(a, 2), p(b, 2)},
+            {letter(a), letter(b), p(a, 2), p(b, 2), p(c, 1)},
+            {letter(a), letter(b), p(a, 2), p(b, 1), p(c, 1)},
+            {letter(a), letter(b), p(a, 2), p(b, 1)},
+        ]);
     }
 
     #[test]

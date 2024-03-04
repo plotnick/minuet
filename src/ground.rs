@@ -204,12 +204,23 @@ impl Groundable for Aggregate<Term> {
     }
 
     fn ground_with(self, bindings: &Bindings) -> Self::Ground {
+        let Aggregate { choices, bounds } = self;
         Self::Ground {
-            choices: self
-                .choices
+            choices: choices
                 .into_iter()
                 .map(|choice| choice.ground_with(bindings))
                 .collect(),
+            bounds: bounds.map(
+                |AggregateBounds {
+                     lower_bound,
+                     upper_bound,
+                 }| {
+                    AggregateBounds::new(
+                        lower_bound.ground_with(bindings),
+                        upper_bound.ground_with(bindings),
+                    )
+                },
+            ),
         }
     }
 

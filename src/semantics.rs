@@ -19,7 +19,7 @@ use crate::tracer::Trace;
 /// different type. There is a unique method of one argument (trace level)
 /// on each program type that advances to the next step; e.g., `ground`,
 /// `image`, `normalize`, `shift`, `complete`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Program<R>(Vec<R>);
 
 impl<R> Program<R> {
@@ -135,14 +135,22 @@ impl BaseRule<GroundTerm> {
     /// for details.
     fn image(self) -> Vec<PropositionalRule> {
         match self {
-            Self::Choice(ChoiceRule { head, body }) => head
-                .image(Context::Head)
-                .into_iter()
-                .map(|head| PropositionalRule {
-                    head,
-                    body: Clause::and(body.iter().cloned().map(Clause::Lit)),
-                })
-                .collect(),
+            Self::Choice(ChoiceRule { head, body }) => {
+                let bounds = head.clone().bounds();
+                let head_image = head.image(Context::Head);
+                let body_image = Clause::and(body.into_iter().map(|b| b.image(Context::Body)));
+                head_image
+                    .into_iter()
+                    .map(|head| PropositionalRule {
+                        head,
+                        body: body_image.clone(),
+                    })
+                    .chain(bounds.into_iter().map(|bound| PropositionalRule {
+                        head: Clause::f(),
+                        body: Clause::and(bound.and_also(body_image.clone())),
+                    }))
+                    .collect()
+            }
             Self::Disjunctive(Rule { head, body }) => vec![PropositionalRule {
                 head: Clause::or(head.into_iter().map(|h| h.image(Context::Head))),
                 body: Clause::and(body.into_iter().map(|b| b.image(Context::Body))),

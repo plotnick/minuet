@@ -13,7 +13,7 @@ use crate::ground::*;
 use crate::syntax::*;
 
 /// Conjunction means _and_. It is spelled "∧" in propositional logic.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Conjunction<T>(Vec<T>);
 
 impl<T> Conjunction<T> {
@@ -88,7 +88,7 @@ where
 }
 
 /// Disjunction means _or_. It is spelled "∨" in propositional logic.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Disjunction<T>(Vec<T>);
 
 impl<T> Disjunction<T> {
@@ -163,7 +163,7 @@ where
 }
 
 /// A literal, conjunction, or disjunction of ground literals.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Clause {
     Lit(Literal<GroundTerm>),
     And(Conjunction<Clause>),
