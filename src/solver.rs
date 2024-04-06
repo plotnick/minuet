@@ -46,10 +46,11 @@ where
     Secondary(T, Option<C>),
 }
 
-/// An option (not a Rust `Option`) is a subset of items.
+/// An option is a subset of items. We call the type `Items`
+/// to avoid conflicting with Rust's `Option`.
 pub type Items<T, C> = Vec<Item<T, C>>;
 
-/// And a solution is a set of options.
+/// A set of options represents a (partial) solution.
 pub type Options<T, C> = Vec<Items<T, C>>;
 
 impl<T, C> Item<T, C>
@@ -104,7 +105,7 @@ where
     }
 }
 
-/// Things that may go wrong initializing & solving an XCC problem.
+/// Things that may go wrong initializing or solving an XCC problem.
 #[derive(Debug, Error)]
 pub enum XccError<T, C>
 where
@@ -689,7 +690,8 @@ mod test {
     /// with his dancing cells implementation. This code running in
     /// release mode on the author's workstation (Intel i9-13900K)
     /// finds them in about 3 hours; finding the 10,480,142,147 solutions
-    /// for _n_ = 16 takes about 24 hours. We keep _n_ set to a value
+    /// for _n_ = 16 takes about 24 hours; finding 82,864,869,804 solutions
+    /// for _n_ = 17 takes about 200 hours. We keep _n_ set to a value
     /// that runs in < 1 second (in release mode) for the test.
     #[test]
     fn extreme_xc() {

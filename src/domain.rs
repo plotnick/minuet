@@ -9,11 +9,10 @@ use std::fmt;
 
 /// A finite domain `D` with reversible element deletion.
 pub trait Domain<T> {
-    /// Determine whether or not `x∈D`.
+    /// Is `x ∈ D`?
     fn contains(&self, x: &T) -> bool;
 
-    /// Delete a given value `x` from `D` and return `true`
-    /// if it was present.
+    /// If `x ∈ D`, delete it and return `true`, otherwise return `false`.
     fn delete(&mut self, x: &T) -> bool;
 
     /// Return a slice of deleted elements up to size `n`.
@@ -96,6 +95,11 @@ impl<T: Copy + Ord> SparseIntegerSet<T> {
         Self { dom, map, len }
     }
 
+    fn check_invariants(&self) {
+        assert!(self.len <= self.dom.len(), "invalid domain length");
+        assert_eq!(self.dom.len(), self.map.len(), "invalid map length");
+    }
+
     // TODO: move to the trait, if possible
     pub fn delete_if(&mut self, mut f: impl FnMut(&T) -> bool) -> &[T] {
         let n = self.len;
@@ -131,9 +135,7 @@ impl<T: Copy + Ord> Domain<T> for SparseIntegerSet<T> {
     }
 
     fn delete(&mut self, x: &T) -> bool {
-        assert!(self.len <= self.dom.len());
-        assert_eq!(self.dom.len(), self.map.len());
-
+        self.check_invariants();
         let i = self.map.get(x).copied().unwrap_or(self.len);
         if i < self.len {
             self.len -= 1;
@@ -157,9 +159,7 @@ impl<T: Copy + Ord> Domain<T> for SparseIntegerSet<T> {
     }
 
     fn restore(&mut self, n: usize) -> bool {
-        assert!(self.len <= self.dom.len());
-        assert_eq!(self.dom.len(), self.map.len());
-
+        self.check_invariants();
         if n <= self.dom.len() {
             self.len = n;
             true
