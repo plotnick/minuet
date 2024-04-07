@@ -26,13 +26,14 @@ use std::string::ToString;
 use thiserror::Error;
 
 use crate::domain::{Domain, SparseIntegerSet};
+use crate::id::{Id, IdVec};
 use crate::tracer::Trace;
 
 /// A primary or secondary item. The `Ord` requirement is so that the
-/// solver can build an item → id map and operate internally on integers
+/// solver can build an item → ID map and operate internally on integers
 /// instead of instances. Solutions are decoded back to `Item` instances
 /// as they are found.
-#[derive(Clone, Debug, Eq, Ord, PartialOrd, PartialEq)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Item<T, C>
 where
     T: Ord,
@@ -131,12 +132,17 @@ where
 const MAX_TRAIL_LEN: usize = 1_000;
 
 // Internal types use item & option ids.
-type ActiveItems = SparseIntegerSet<usize>;
-type ActiveOptions = Vec<SparseIntegerSet<usize>>;
-type ColorMap = BTreeMap<(usize, usize), usize>;
-type OptionItems = Vec<SparseIntegerSet<usize>>;
-type Solution = Vec<usize>;
-type Trail = Vec<(usize, usize, Vec<(usize, usize)>)>;
+type ActiveItems<T, C> = SparseIntegerSet<ItemId<T, C>>;
+type ActiveOptions<T, C> = IdVec<SparseIntegerSet<OptionId<T, C>>, Item<T, C>>;
+type ColorId<C> = Id<C>;
+type ColorMap<T, C> = BTreeMap<(OptionId<T, C>, ItemId<T, C>), ColorId<C>>;
+type ItemId<T, C> = Id<Item<T, C>>;
+type ItemsById<T, C> = IdVec<Item<T, C>, Item<T, C>>;
+type OptionId<T, C> = Id<ItemsById<T, C>>;
+type OptionsById<T, C> = IdVec<ItemsById<T, C>, ItemsById<T, C>>;
+type OptionItems<T, C> = IdVec<BTreeSet<ItemId<T, C>>, ItemsById<T, C>>;
+type Solution<T, C> = Vec<OptionId<T, C>>;
+type Trail<T, C> = Vec<(usize, usize, Vec<(ItemId<T, C>, usize)>)>;
 
 /// XCC solver à la Knuth §7.2.2.3. The tables here are initialized
 /// once and never changed; all mutable state is relegated to the
@@ -152,24 +158,24 @@ where
 {
     /// The given items, with primary items sorted ahead of secondary ones.
     /// Item ids are assigned by their position here.
-    items: Items<T, C>,
+    items: ItemsById<T, C>,
 
     /// The given options (lists of items), in the given order.
     /// Option ids are assigned by their position here.
-    options: Options<T, C>,
+    options: OptionsById<T, C>,
 
-    /// Which options involve what items, by id. Determines
+    /// Which options involve what items, by ID. Determines
     /// item involvement and sibling relations in an option.
-    option_items: OptionItems,
+    option_items: OptionItems<T, C>,
 
     /// The colors with which secondary items appear in options,
     /// indexed by `(option_id, item_id)` pairs. Used to ensure
     /// consistently colored secondary items.
-    colors: ColorMap,
+    colors: ColorMap<T, C>,
 
-    /// The smallest id designating a secondary item.
+    /// The smallest ID designating a secondary item.
     /// Determines which items are considered primary.
-    second: usize,
+    second: ItemId<T, C>,
 
     /// Status messages to print to standard error.
     trace: Trace,
@@ -186,29 +192,40 @@ where
         options: Options<T, C>,
         trace: Trace,
     ) -> Result<Self, XccError<T, C>> {
-        // Make primary items precede secondary ones, and record the boundary.
+        // Make primary items precede secondary ones.
         items.sort_by_key(Item::is_secondary);
+
+        // Translate items & options to IDs.
+        let items = ItemsById::from(items);
+        let options = options
+            .into_iter()
+            .map(ItemsById::from)
+            .collect::<OptionsById<T, C>>();
+
+        // Note the boundary between primary & secondary options.
         let second = items
             .iter()
             .position(Item::is_secondary)
-            .unwrap_or(usize::MAX);
+            .map(|i| items.id(i))
+            .unwrap_or_else(Id::max);
 
-        // Map item name → id.
+        // Map item name → item ID.
         let item_ids = items
             .iter()
             .enumerate()
-            .map(|(index, item)| (item.item(), index))
-            .collect::<BTreeMap<&T, usize>>();
+            .map(|(index, item)| (item.item(), Id::new(index, item)))
+            .collect::<BTreeMap<&T, ItemId<T, C>>>();
 
-        // Record (by id) which options involve what items and how they are
+        // Record (by ID) which options involve what items and how they are
         // colored. Check as we go that within an option, no primary item
         // appears more than once and all secondary items are consistently
         // colored.
-        let mut color_ids = BTreeMap::<&C, usize>::new();
-        let mut option_items = OptionItems::new();
+        let mut color_ids = BTreeMap::<&C, ColorId<C>>::new();
+        let mut option_items = OptionItems::from(Vec::new());
         let mut colors = ColorMap::new();
-        let mut uniq_items = BTreeSet::<usize>::new();
+        let mut uniq_items = BTreeSet::<ItemId<T, C>>::new();
         for (o, option) in options.iter().enumerate() {
+            let o = options.id(o);
             for item in option.iter() {
                 if !item_ids.contains_key(item.item()) {
                     return Err(XccError::UndeclaredItem(item.clone()));
@@ -216,27 +233,27 @@ where
             }
 
             uniq_items.clear();
-            let ids = SparseIntegerSet::new(option.iter().map(|item| item_ids[item.item()]));
+            let ids = Vec::from_iter(option.iter().map(|item| item_ids[item.item()]));
             for &i in ids.iter() {
                 if i < second && !uniq_items.insert(i) {
                     return Err(XccError::PrimaryItemUsedTwice(
                         items[i].clone(),
-                        option.clone(),
+                        option.clone().into_vec(),
                     ));
                 }
             }
-            option_items.push(ids);
+            option_items.push(ids.into_iter().collect());
 
-            for item in option {
+            for item in option.iter() {
                 if let Some(color) = item.color() {
                     let i = item_ids[item.item()];
                     let n = color_ids.len() + 1; // 0 = unique color
-                    let c = *color_ids.entry(color).or_insert(n);
+                    let c = *color_ids.entry(color).or_insert_with(|| Id::new(n, color));
                     if let Some(&d) = colors.get(&(o, i)) {
                         if d != c {
                             return Err(XccError::SecondaryItemInconsistentlyColored(
                                 items[i].clone(),
-                                option.clone(),
+                                option.clone().into_vec(),
                             ));
                         }
                     } else {
@@ -265,16 +282,22 @@ where
         let state = DanceState {
             trail: Trail::new(),
             solution: Solution::new(),
-            active_items: ActiveItems::new(0..n),
+            active_items: ActiveItems::new((0..n).map(|i| self.items.id(i))),
             active_options: (0..n)
-                .map(|i| (0..m).filter(|&o| self.is_involved(o, i, 0)).collect())
-                .collect::<ActiveOptions>(),
+                .map(|i| self.items.id(i))
+                .map(|i| {
+                    (0..m)
+                        .map(|o| self.options.id(o))
+                        .filter(|&o| self.is_involved(o, i, Id::min()))
+                        .collect()
+                })
+                .collect::<ActiveOptions<T, C>>(),
         };
         DanceStep::new(self, state)
     }
 
     /// Find the next solution. See Knuth 7.2.2.1-(9), 7.2.2.1X,C, 7.2.2.3C.
-    fn step(&self, state: &mut DanceState) -> Result<Options<T, C>, XccError<T, C>> {
+    fn step(&self, state: &mut DanceState<T, C>) -> Result<Options<T, C>, XccError<T, C>> {
         loop {
             if let Some((item, option)) = self.choose(state) {
                 self.cover(item, option, state)?;
@@ -288,40 +311,43 @@ where
     }
 
     /// Decode a set of option ids into (cloned) options.
-    fn decode_solution(&self, solution: &Solution) -> Options<T, C> {
+    fn decode_solution(&self, solution: &Solution<T, C>) -> Options<T, C> {
         self.trace_solution(solution);
         solution
             .iter()
-            .map(|&option| self.options[option].clone())
+            .map(|&option| self.options[option].clone().into_vec())
             .collect()
     }
 
-    /// Look up how `item` is colored in `option`. Return a color id,
-    /// or `0` if it is not assigned a color there (or is primary).
-    fn color(&self, option: usize, item: usize) -> usize {
-        self.colors.get(&(option, item)).copied().unwrap_or(0)
+    /// Look up how `item` is colored in `option`. Return a color ID,
+    /// which will be 0 if it is primary or not assigned a color there.
+    fn color(&self, option: OptionId<T, C>, item: ItemId<T, C>) -> ColorId<C> {
+        self.colors
+            .get(&(option, item))
+            .copied()
+            .unwrap_or_else(Id::min)
     }
 
     /// Visit the items that are involved with (contained by) `option`.
-    fn involved(&self, option: usize) -> impl Iterator<Item = &usize> {
+    fn involved(&self, option: OptionId<T, C>) -> impl Iterator<Item = &ItemId<T, C>> {
         self.option_items[option].iter()
     }
 
     /// Does `option` involve (contain) `item` with (optional, other) `color`?
     /// The complemented color condition lets us use this predicate to delete
     /// conflicting options.
-    fn is_involved(&self, option: usize, item: usize, color: usize) -> bool {
+    fn is_involved(&self, option: OptionId<T, C>, item: ItemId<T, C>, color: ColorId<C>) -> bool {
         self.option_items[option].contains(&item)
             && (self.is_primary(item) || self.color(option, item) != color)
     }
 
     /// Is `item` a primary (mandatory, uncolored) item?
-    fn is_primary(&self, item: usize) -> bool {
+    fn is_primary(&self, item: ItemId<T, C>) -> bool {
         item < self.second
     }
 
     /// Is `item` a secondary (optional, colored) item?
-    fn is_secondary(&self, item: usize) -> bool {
+    fn is_secondary(&self, item: ItemId<T, C>) -> bool {
         !self.is_primary(item)
     }
 
@@ -335,8 +361,8 @@ where
             active_items,
             active_options,
             ..
-        }: &DanceState,
-    ) -> Option<(usize, usize)> {
+        }: &DanceState<T, C>,
+    ) -> Option<(ItemId<T, C>, OptionId<T, C>)> {
         active_items
             .iter()
             .filter_map(|&item| {
@@ -358,9 +384,9 @@ where
     /// ways to cover `item`, and hide all siblings of `item` in `option`.
     fn cover(
         &self,
-        item: usize,
-        option: usize,
-        state: &mut DanceState,
+        item: ItemId<T, C>,
+        option: OptionId<T, C>,
+        state: &mut DanceState<T, C>,
     ) -> Result<(), XccError<T, C>> {
         trace!(
             self.trace,
@@ -403,7 +429,7 @@ where
             active_items,
             active_options,
             ..
-        }: &mut DanceState,
+        }: &mut DanceState<T, C>,
     ) -> Result<(), XccError<T, C>> {
         if trail.len() >= MAX_TRAIL_LEN {
             Err(XccError::TrailOverflow(MAX_TRAIL_LEN))
@@ -414,7 +440,7 @@ where
             let options = active_items
                 .iter()
                 .map(|&i| (i, active_options[i].len()))
-                .collect::<Vec<(usize, usize)>>();
+                .collect::<Vec<(ItemId<T, C>, usize)>>();
             trail.push((s, n, options));
             Ok(())
         }
@@ -429,7 +455,7 @@ where
             solution,
             active_items,
             active_options,
-        }: &mut DanceState,
+        }: &mut DanceState<T, C>,
     ) -> bool {
         if let Some((s, n, options)) = trail.pop() {
             assert!(n > 0, "no active items on trail");
@@ -446,7 +472,12 @@ where
     }
 
     /// If tracing is active, write a description of the active items & options to stderr.
-    fn trace_state(&self, when: &'static str, items: &ActiveItems, options: &ActiveOptions) {
+    fn trace_state(
+        &self,
+        when: &'static str,
+        items: &ActiveItems<T, C>,
+        options: &ActiveOptions<T, C>,
+    ) {
         trace!(
             self.trace,
             Solve,
@@ -462,7 +493,7 @@ where
                 .map(|(i, options)| {
                     format!(
                         "{} => {{{}}}",
-                        self.format_item(i),
+                        self.format_item(self.items.id(i)),
                         options
                             .iter()
                             .map(|&o| self.format_option(o))
@@ -476,7 +507,7 @@ where
     }
 
     /// If tracing is active, write a solution to stderr.
-    pub fn trace_solution(&self, solution: &Solution) {
+    pub fn trace_solution(&self, solution: &Solution<T, C>) {
         trace!(
             self.trace,
             Solve,
@@ -489,11 +520,11 @@ where
         );
     }
 
-    fn format_item(&self, item: usize) -> String {
+    fn format_item(&self, item: ItemId<T, C>) -> String {
         self.items[item].name()
     }
 
-    fn format_option(&self, option: usize) -> String {
+    fn format_option(&self, option: OptionId<T, C>) -> String {
         format!(
             "[{}]",
             self.options[option]
@@ -509,11 +540,11 @@ where
 /// to an XCC problem. The solver will reference and modify
 /// this data, but not own it.
 #[derive(Debug)]
-struct DanceState {
-    trail: Trail,
-    solution: Solution,
-    active_items: ActiveItems,
-    active_options: ActiveOptions,
+struct DanceState<T: Ord, C: Ord> {
+    trail: Trail<T, C>,
+    solution: Solution<T, C>,
+    active_items: ActiveItems<T, C>,
+    active_options: ActiveOptions<T, C>,
 }
 
 /// An iterator over all solutions to an XCC problem. Each iteration
@@ -529,7 +560,7 @@ where
     C: Ord + Clone + fmt::Debug + fmt::Display,
 {
     solver: &'a DancingCells<T, C>,
-    state: DanceState,
+    state: DanceState<T, C>,
 }
 
 impl<'a, T, C> DanceStep<'a, T, C>
@@ -537,7 +568,7 @@ where
     T: Ord + Clone + fmt::Debug + fmt::Display,
     C: Ord + Clone + fmt::Debug + fmt::Display,
 {
-    fn new(solver: &'a DancingCells<T, C>, state: DanceState) -> Self {
+    fn new(solver: &'a DancingCells<T, C>, state: DanceState<T, C>) -> Self {
         Self { solver, state }
     }
 }

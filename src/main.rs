@@ -9,6 +9,7 @@ mod domain;
 mod formula;
 mod generate;
 mod ground;
+mod id;
 mod image;
 mod semantics;
 mod solver;
