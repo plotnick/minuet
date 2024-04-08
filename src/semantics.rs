@@ -7,7 +7,7 @@ use std::fmt;
 use std::ops::Index;
 
 use crate::clause::{Clause, Conjunction, Disjunction, Dnf};
-use crate::formula::{Formula, Interpretation};
+use crate::formula::{Atoms, Formula, Interpretation};
 use crate::ground::{GroundTerm, Groundable as _};
 use crate::image::{Context, PropositionalImage as _};
 use crate::syntax::*;
@@ -44,16 +44,21 @@ impl<R> Program<R> {
     }
 }
 
-impl<R> Formula for Program<R>
+impl<R> Atoms for Program<R>
 where
-    R: Formula,
+    R: Atoms,
 {
     fn atoms(&self, interp: &mut Interpretation) {
         for rule in self.iter() {
             rule.atoms(interp);
         }
     }
+}
 
+impl<R> Formula for Program<R>
+where
+    R: Formula,
+{
     fn eval(&self, interp: &Interpretation) -> bool {
         self.iter().all(|rule| rule.eval(interp))
     }
@@ -327,14 +332,16 @@ impl ShiftedRule {
     }
 }
 
-impl Formula for ShiftedRule {
+impl Atoms for ShiftedRule {
     fn atoms(&self, interp: &mut Interpretation) {
         if let Some(h) = self.head.as_ref() {
             h.atoms(interp);
         }
         self.body.iter().for_each(|b| b.atoms(interp));
     }
+}
 
+impl Formula for ShiftedRule {
     fn is_positive(&self) -> bool {
         self.head.iter().all(|h| h.is_positive()) && self.body.iter().all(|b| b.is_positive())
     }
@@ -415,14 +422,16 @@ impl CompleteRule {
     }
 }
 
-impl Formula for CompleteRule {
+impl Atoms for CompleteRule {
     fn atoms(&self, interp: &mut Interpretation) {
         if let Some(h) = self.head.as_ref() {
             h.atoms(interp);
         }
         self.body.atoms(interp);
     }
+}
 
+impl Formula for CompleteRule {
     fn is_positive(&self) -> bool {
         self.head.iter().all(|h| h.is_positive()) && self.body.is_positive()
     }

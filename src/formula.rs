@@ -19,18 +19,22 @@ pub type Interpretation = BTreeSet<Atom<GroundTerm>>;
 /// is also called an _answer set_.
 pub type Model = Interpretation;
 
+/// Collect atomic formulas.
+pub trait Atoms {
+    fn atoms(&self, interp: &mut Interpretation);
+}
+
 /// Evaluate a ground formula with respect to an interpretation (a set
 /// of atoms taken as true); i.e., ask "is this interpretation a model
 /// of `self`?" *Note*: this is _not_ the same as executing a logic
 /// program; this kind of evaluation is used during compilation, prior
 /// to execution.
 pub trait Formula {
-    fn atoms(&self, interp: &mut Interpretation);
     fn eval(&self, interp: &Interpretation) -> bool;
     fn is_positive(&self) -> bool;
 }
 
-impl Formula for GroundTerm {
+impl Atoms for GroundTerm {
     #[allow(clippy::only_used_in_recursion)]
     fn atoms(&self, interp: &mut Interpretation) {
         use GroundTerm::*;
@@ -45,17 +49,9 @@ impl Formula for GroundTerm {
             _ => (),
         }
     }
-
-    fn eval(&self, _interp: &Interpretation) -> bool {
-        todo!()
-    }
-
-    fn is_positive(&self) -> bool {
-        todo!()
-    }
 }
 
-impl Formula for Pool<GroundTerm> {
+impl Atoms for Pool<GroundTerm> {
     fn atoms(&self, interp: &mut Interpretation) {
         use Pool::*;
         match self {
@@ -70,35 +66,25 @@ impl Formula for Pool<GroundTerm> {
             }
         }
     }
+}
 
-    fn eval(&self, _interp: &Interpretation) -> bool {
-        todo!()
-    }
-
-    fn is_positive(&self) -> bool {
-        use Pool::*;
-        match self {
-            Interval(start, end) => start.is_positive() && end.is_positive(),
-            Set(terms) => terms.iter().all(|t| t.is_positive()),
-        }
+impl Atoms for Atom<GroundTerm> {
+    fn atoms(&self, interp: &mut Interpretation) {
+        interp.insert(self.clone());
     }
 }
 
 impl Formula for Atom<GroundTerm> {
-    fn atoms(&self, interp: &mut Interpretation) {
-        interp.insert(self.clone());
+    fn eval(&self, interp: &Interpretation) -> bool {
+        interp.contains(self)
     }
 
     fn is_positive(&self) -> bool {
         true
     }
-
-    fn eval(&self, interp: &Interpretation) -> bool {
-        interp.contains(self)
-    }
 }
 
-impl Formula for Literal<GroundTerm> {
+impl Atoms for Literal<GroundTerm> {
     fn atoms(&self, interp: &mut Interpretation) {
         use Literal::*;
         match self {
@@ -109,11 +95,9 @@ impl Formula for Literal<GroundTerm> {
             }
         }
     }
+}
 
-    fn is_positive(&self) -> bool {
-        self.is_positive()
-    }
-
+impl Formula for Literal<GroundTerm> {
     #[allow(clippy::nonminimal_bool)]
     fn eval(&self, interp: &Interpretation) -> bool {
         use Literal::*;
@@ -124,24 +108,44 @@ impl Formula for Literal<GroundTerm> {
             Relation(x, rel, y) => rel.eval(x, y),
         }
     }
+
+    fn is_positive(&self) -> bool {
+        self.is_positive()
+    }
 }
 
-impl<T> Formula for Conjunction<T>
+impl<T> Atoms for Conjunction<T>
 where
-    T: Formula,
+    T: Atoms,
 {
     fn atoms(&self, interp: &mut Interpretation) {
         for c in self.iter() {
             c.atoms(interp);
         }
     }
+}
+
+impl<T> Formula for Conjunction<T>
+where
+    T: Formula,
+{
+    fn eval(&self, interp: &Interpretation) -> bool {
+        self.iter().all(|c| c.eval(interp))
+    }
 
     fn is_positive(&self) -> bool {
         self.iter().all(|c| c.is_positive())
     }
+}
 
-    fn eval(&self, interp: &Interpretation) -> bool {
-        self.iter().all(|c| c.eval(interp))
+impl<T> Atoms for Disjunction<T>
+where
+    T: Atoms,
+{
+    fn atoms(&self, interp: &mut Interpretation) {
+        for d in self.iter() {
+            d.atoms(interp);
+        }
     }
 }
 
@@ -149,22 +153,16 @@ impl<T> Formula for Disjunction<T>
 where
     T: Formula,
 {
-    fn atoms(&self, interp: &mut Interpretation) {
-        for d in self.iter() {
-            d.atoms(interp);
-        }
+    fn eval(&self, interp: &Interpretation) -> bool {
+        self.iter().any(|d| d.eval(interp))
     }
 
     fn is_positive(&self) -> bool {
         self.iter().all(|d| d.is_positive())
     }
-
-    fn eval(&self, interp: &Interpretation) -> bool {
-        self.iter().any(|d| d.eval(interp))
-    }
 }
 
-impl Formula for Clause {
+impl Atoms for Clause {
     fn atoms(&self, interp: &mut Interpretation) {
         match self {
             Self::Lit(l) => l.atoms(interp),
@@ -172,17 +170,19 @@ impl Formula for Clause {
             Self::Or(d) => d.atoms(interp),
         }
     }
+}
 
-    fn is_positive(&self) -> bool {
-        self.is_positive()
-    }
-
+impl Formula for Clause {
     fn eval(&self, interp: &Interpretation) -> bool {
         match self {
             Self::Lit(l) => l.eval(interp),
             Self::And(c) => c.eval(interp),
             Self::Or(d) => d.eval(interp),
         }
+    }
+
+    fn is_positive(&self) -> bool {
+        self.is_positive()
     }
 }
 
