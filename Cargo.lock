@@ -20,7 +20,7 @@ checksum = "a8eb53f38e7f2e30ad98faf6a15a3b1135c45a1b9740f71fba53438437bf2a25"
 
 [[package]]
 name = "minuet"
-version = "0.0.0"
+version = "0.0.1"
 dependencies = [
  "bitmask-enum",
  "gray-codes",
