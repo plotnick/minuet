@@ -7,12 +7,12 @@ use std::fmt;
 use std::ops::Index;
 
 use minuet_syntax::*;
+use minuet_tracer::*;
 
 use crate::clause::{Clause, Conjunction, Disjunction, Dnf};
 use crate::formula::{Atoms, Formula, Interpretation};
 use crate::ground::{GroundTerm, Groundable as _};
 use crate::image::{Bounds as _, Context, PropositionalImage as _};
-use crate::tracer::Trace;
 
 /// A program is a collection of rules, which we'll preprocess prior to
 /// compilation in a strict sequence of meaning-preserving steps. Each

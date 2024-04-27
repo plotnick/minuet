@@ -10,6 +10,7 @@ pub enum Trace {
     Solve,
 }
 
+#[macro_export]
 macro_rules! trace {
     ($trace:expr, $level:ident, $fmt:literal $(,)? $($arg:expr),* $(,)?) => {
         if $trace.intersects(Trace::$level) {

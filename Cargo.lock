@@ -22,15 +22,22 @@ checksum = "a8eb53f38e7f2e30ad98faf6a15a3b1135c45a1b9740f71fba53438437bf2a25"
 name = "minuet"
 version = "0.0.1"
 dependencies = [
- "bitmask-enum",
  "gray-codes",
  "minuet-syntax",
+ "minuet-tracer",
  "thiserror",
 ]
 
 [[package]]
 name = "minuet-syntax"
 version = "0.0.1"
+
+[[package]]
+name = "minuet-tracer"
+version = "0.0.1"
+dependencies = [
+ "bitmask-enum",
+]
 
 [[package]]
 name = "proc-macro2"

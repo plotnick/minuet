@@ -1,4 +1,4 @@
-workspace = { members = ["syntax"] }
+workspace = { members = ["syntax", "tracer"] }
 
 [package]
 name = "minuet"
@@ -6,9 +6,9 @@ version = "0.0.1"
 edition = "2021"
 
 [dependencies]
-bitmask-enum = "2.2"
 gray-codes = "0.1"
 minuet-syntax = { path = "syntax" }
+minuet-tracer = { path = "tracer" }
 thiserror = "1.0"
 
 [dev-dependencies]

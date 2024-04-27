@@ -168,8 +168,9 @@ impl PropositionalImage for Literal<GroundTerm> {
 mod test {
     use super::*;
 
+    use minuet_tracer::Trace;
+
     use crate::semantics::{Program, PropositionalRule};
-    use crate::tracer::Trace;
 
     #[test]
     fn atomic_image() {

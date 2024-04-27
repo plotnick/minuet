@@ -25,9 +25,10 @@ use std::string::ToString;
 
 use thiserror::Error;
 
+use minuet_tracer::*;
+
 use crate::domain::{Domain, SparseIntegerSet};
 use crate::id::{Id, IdVec};
-use crate::tracer::Trace;
 
 /// A primary or secondary item. The `Ord` requirement is so that the
 /// solver can build an item → ID map and operate internally on integers

@@ -1,0 +1,10 @@
+[package]
+name = "minuet-tracer"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+path = "tracer.rs"
+
+[dependencies]
+bitmask-enum = "2.2"
