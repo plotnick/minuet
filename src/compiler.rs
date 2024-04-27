@@ -32,11 +32,12 @@ use std::collections::BTreeSet;
 
 use gray_codes::{InclusionExclusion, SetMutation};
 
+use minuet_syntax::*;
+
 use crate::formula::*;
 use crate::ground::*;
 use crate::semantics::*;
 use crate::solver::*;
-use crate::syntax::*;
 use crate::tracer::*;
 
 pub use crate::solver::XccError; // re-export

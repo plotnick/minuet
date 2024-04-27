@@ -11,11 +11,12 @@
 use std::cmp::Ordering;
 use std::collections::btree_set::{self, BTreeSet};
 use std::iter::FromIterator;
-use std::ops;
+use std::ops::{self, Neg as _, Not as _};
+
+use minuet_syntax::*;
 
 use crate::generate::combinations_mixed;
 use crate::ground::*;
-use crate::syntax::*;
 
 /// A set of constant values denoted by some term.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -249,120 +250,6 @@ impl_op_for_values!(ops::Sub, sub, BinOp::Sub);
 impl_op_for_values!(ops::Mul, mul, BinOp::Mul);
 impl_op_for_values!(ops::Div, div, BinOp::Div);
 impl_op_for_values!(ops::Rem, rem, BinOp::Rem);
-
-impl ops::Add for Constant {
-    type Output = Option<Self>;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        use Constant::*;
-        match (self, rhs) {
-            (Name(_), Number(_)) | (Number(_), Name(_)) => None,
-            (Number(x), Number(y)) => Some(Number(x + y)),
-            (Name(a), Name(b)) => Some(Name(Symbol::new({
-                let mut x = a.name().to_owned();
-                x.push_str(b.name());
-                x
-            }))),
-        }
-    }
-}
-
-impl ops::Sub for Constant {
-    type Output = Option<Self>;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        use Constant::*;
-        match (self, rhs) {
-            (Name(_), Number(_)) | (Number(_), Name(_)) => None,
-            (Number(x), Number(y)) => Some(Number(x - y)),
-            (Name(a), Name(b)) => a
-                .name()
-                .strip_suffix(b.name())
-                .map(|diff| Name(Symbol::new(String::from(diff)))),
-        }
-    }
-}
-
-impl ops::Mul for Constant {
-    type Output = Option<Self>;
-
-    fn mul(self, rhs: Self) -> Self::Output {
-        use Constant::*;
-        match (self, rhs) {
-            (Name(_), Name(_)) => None,
-            (Number(x), Number(y)) => Some(Number(x * y)),
-            (Name(a), Number(n)) | (Number(n), Name(a)) => Some(Name(Symbol::new({
-                let mut x = String::new();
-                for _ in 0..n {
-                    x.push_str(a.name());
-                }
-                x
-            }))),
-        }
-    }
-}
-
-impl ops::Div for Constant {
-    type Output = Option<Self>;
-
-    fn div(self, rhs: Self) -> Self::Output {
-        use Constant::*;
-        match (self, rhs) {
-            (Number(_) | Name(_), Name(_)) => None,
-            (Number(_), Number(0)) => None,
-            (Number(x), Number(y)) => Some(Number(x / y)),
-            (Name(name), Number(number)) => todo!("{name} / {number}"),
-        }
-    }
-}
-
-impl ops::Rem for Constant {
-    type Output = Option<Self>;
-
-    fn rem(self, rhs: Self) -> Self::Output {
-        use Constant::*;
-        match (self, rhs) {
-            (Number(_) | Name(_), Name(_)) => None,
-            (Number(_), Number(0)) => None,
-            (Number(x), Number(y)) => Some(Number(x % y)),
-            (Name(name), Number(number)) => todo!("{name} % {number}"),
-        }
-    }
-}
-
-impl Constant {
-    fn abs(self) -> Option<Self> {
-        use Constant::*;
-        if let Number(x) = self {
-            Some(Number(x.abs()))
-        } else {
-            None
-        }
-    }
-
-    fn neg(self) -> Option<Self> {
-        use Constant::*;
-        if let Number(x) = self {
-            Some(Number(-x))
-        } else {
-            None
-        }
-    }
-
-    fn not(self) -> Option<Self> {
-        todo!("classical negation")
-    }
-
-    pub fn pow(self, rhs: Self) -> Option<Self> {
-        use Constant::*;
-        if let (Number(x), Number(y)) = (self, rhs) {
-            if let Ok(y) = u32::try_from(y) {
-                return Some(Number(x.pow(y)));
-            }
-        }
-        None
-    }
-}
 
 #[cfg(test)]
 mod test {

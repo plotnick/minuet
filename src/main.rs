@@ -1,6 +1,4 @@
 #[macro_use]
-mod syntax;
-#[macro_use]
 mod tracer;
 
 mod clause;

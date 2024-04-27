@@ -4,9 +4,10 @@ use std::collections::BTreeSet;
 
 use gray_codes::{InclusionExclusion, SetMutation};
 
+use minuet_syntax::*;
+
 use crate::clause::*;
 use crate::ground::*;
-use crate::syntax::*;
 use crate::values::*;
 
 /// Propositional images of some expressions may be either conjunctive or
@@ -53,10 +54,14 @@ impl PropositionalImage for Aggregate<GroundTerm> {
     }
 }
 
-impl Aggregate<GroundTerm> {
+pub trait Bounds {
+    fn bounds(self) -> Vec<Conjunction<Clause>>;
+}
+
+impl Bounds for Aggregate<GroundTerm> {
     /// Conjunctive constraints carrying cardinality bounds on an aggregate.
     /// See "ASP" §5.7, "AG" §4.7.
-    pub fn bounds(self) -> Vec<Conjunction<Clause>> {
+    fn bounds(self) -> Vec<Conjunction<Clause>> {
         match self {
             Aggregate {
                 choices,

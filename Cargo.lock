@@ -24,8 +24,13 @@ version = "0.0.1"
 dependencies = [
  "bitmask-enum",
  "gray-codes",
+ "minuet-syntax",
  "thiserror",
 ]
+
+[[package]]
+name = "minuet-syntax"
+version = "0.0.1"
 
 [[package]]
 name = "proc-macro2"

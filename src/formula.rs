@@ -5,9 +5,10 @@
 
 use std::collections::BTreeSet;
 
+use minuet_syntax::*;
+
 use crate::clause::*;
 use crate::ground::*;
-use crate::syntax::*;
 
 /// An interpretation is a set of atoms interpreted as true;
 /// any atom not contained in the set is interpreted as false.

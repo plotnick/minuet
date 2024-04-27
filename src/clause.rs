@@ -9,8 +9,9 @@ use std::fmt;
 use std::ops::Index;
 use std::vec;
 
+use minuet_syntax::*;
+
 use crate::ground::*;
-use crate::syntax::*;
 
 /// Conjunction means _and_. It is spelled "∧" in propositional logic.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]

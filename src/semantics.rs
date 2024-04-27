@@ -6,11 +6,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::ops::Index;
 
+use minuet_syntax::*;
+
 use crate::clause::{Clause, Conjunction, Disjunction, Dnf};
 use crate::formula::{Atoms, Formula, Interpretation};
 use crate::ground::{GroundTerm, Groundable as _};
-use crate::image::{Context, PropositionalImage as _};
-use crate::syntax::*;
+use crate::image::{Bounds as _, Context, PropositionalImage as _};
 use crate::tracer::Trace;
 
 /// A program is a collection of rules, which we'll preprocess prior to
@@ -134,11 +135,19 @@ impl fmt::Display for PropositionalRule {
     }
 }
 
-impl BaseRule<GroundTerm> {
+trait RuleImage {
+    type Image;
+
+    fn image(self) -> Vec<Self::Image>;
+}
+
+impl RuleImage for BaseRule<GroundTerm> {
+    type Image = PropositionalRule;
+
     /// Find the propositional image of one base rule (which may be more
     /// than one propositional rule). See the `PropositionalImage` trait
     /// for details.
-    fn image(self) -> Vec<PropositionalRule> {
+    fn image(self) -> Vec<Self::Image> {
         match self {
             Self::Choice(ChoiceRule { head, body }) => {
                 let bounds = head.clone().bounds();

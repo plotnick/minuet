@@ -4,9 +4,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use minuet_syntax::*;
+
 use crate::generate::combinations_mixed;
 use crate::semantics::Program;
-use crate::syntax::*;
 use crate::values::Values as _;
 
 /// Map variable names to constant values (in order to ground them).

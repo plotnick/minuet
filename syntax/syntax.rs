@@ -3,13 +3,11 @@
 //! See "Abstract Gringo" (2015) by Gebser, et al. and the
 //! "ASP-Core-2 Input Language Format" (2012). A string or
 //! macro parser may layer whatever surface syntax it likes
-//! on top of these elements; see the example in the `test`
-//! module.
-
-#![allow(dead_code)]
+//! on top of these elements.
 
 use std::collections::BTreeSet;
 use std::fmt;
+use std::ops;
 
 /// Uninterpreted element that names itself, a predicate, or a variable.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -68,6 +66,130 @@ impl fmt::Display for Constant {
             Self::Name(s) => f.write_fmt(format_args!("{s}")),
             Self::Number(i) => f.write_fmt(format_args!("{i}")),
         }
+    }
+}
+
+impl ops::Add for Constant {
+    type Output = Option<Self>;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        use Constant::*;
+        match (self, rhs) {
+            (Name(_), Number(_)) | (Number(_), Name(_)) => None,
+            (Number(x), Number(y)) => Some(Number(x + y)),
+            (Name(a), Name(b)) => Some(Name(Symbol::new({
+                let mut x = a.name().to_owned();
+                x.push_str(b.name());
+                x
+            }))),
+        }
+    }
+}
+
+impl ops::Sub for Constant {
+    type Output = Option<Self>;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        use Constant::*;
+        match (self, rhs) {
+            (Name(_), Number(_)) | (Number(_), Name(_)) => None,
+            (Number(x), Number(y)) => Some(Number(x - y)),
+            (Name(a), Name(b)) => a
+                .name()
+                .strip_suffix(b.name())
+                .map(|diff| Name(Symbol::new(String::from(diff)))),
+        }
+    }
+}
+
+impl ops::Mul for Constant {
+    type Output = Option<Self>;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        use Constant::*;
+        match (self, rhs) {
+            (Name(_), Name(_)) => None,
+            (Number(x), Number(y)) => Some(Number(x * y)),
+            (Name(a), Number(n)) | (Number(n), Name(a)) => Some(Name(Symbol::new({
+                let mut x = String::new();
+                for _ in 0..n {
+                    x.push_str(a.name());
+                }
+                x
+            }))),
+        }
+    }
+}
+
+impl ops::Div for Constant {
+    type Output = Option<Self>;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        use Constant::*;
+        match (self, rhs) {
+            (Number(_) | Name(_), Name(_)) => None,
+            (Number(_), Number(0)) => None,
+            (Number(x), Number(y)) => Some(Number(x / y)),
+            (Name(name), Number(number)) => todo!("{name} / {number}"),
+        }
+    }
+}
+
+impl ops::Rem for Constant {
+    type Output = Option<Self>;
+
+    fn rem(self, rhs: Self) -> Self::Output {
+        use Constant::*;
+        match (self, rhs) {
+            (Number(_) | Name(_), Name(_)) => None,
+            (Number(_), Number(0)) => None,
+            (Number(x), Number(y)) => Some(Number(x % y)),
+            (Name(name), Number(number)) => todo!("{name} % {number}"),
+        }
+    }
+}
+
+impl ops::Neg for Constant {
+    type Output = Option<Self>;
+
+    fn neg(self) -> Self::Output {
+        use Constant::*;
+        if let Number(x) = self {
+            Some(Number(-x))
+        } else {
+            None
+        }
+    }
+}
+
+impl ops::Not for Constant {
+    type Output = Option<Self>;
+
+    fn not(self) -> Self::Output {
+        todo!("classical negation")
+    }
+}
+
+/// Arithmetic operations represented by direct methods
+/// instead of `std::ops` traits.
+impl Constant {
+    pub fn abs(self) -> Option<Self> {
+        use Constant::*;
+        if let Number(x) = self {
+            Some(Number(x.abs()))
+        } else {
+            None
+        }
+    }
+
+    pub fn pow(self, rhs: Self) -> Option<Self> {
+        use Constant::*;
+        if let (Number(x), Number(y)) = (self, rhs) {
+            if let Ok(y) = u32::try_from(y) {
+                return Some(Number(x.pow(y)));
+            }
+        }
+        None
     }
 }
 
@@ -587,29 +709,323 @@ where
     }
 }
 
+#[macro_export]
+macro_rules! sym {
+    [$s:ident] => {
+        Symbol::new(String::from(stringify!($s)))
+    };
+}
+
+#[macro_export]
+macro_rules! constant {
+    [($($c:tt)*)] => { constant![$($c)*] };
+    [$s:ident] => { Constant::Name(sym![$s]) };
+    [$i:literal] => { Constant::Number($i) };
+    [-$i:literal] => { Constant::Number(-$i) };
+}
+
+#[macro_export]
+macro_rules! term {
+    [($($term:tt)*)] => { term![$($term)*] };
+    [|($($term:tt)*)|] => { Term::unary_operation(UnaryOp::Abs, term![$($term)*]) };
+    [|$a:tt|] => { Term::unary_operation(UnaryOp::Abs, term![$a]) };
+    [-$a:literal] => { Term::Constant(Constant::Number(-$a)) };
+    [-$a:tt] => { Term::unary_operation(UnaryOp::Neg, term![$a]) };
+    [~$a:tt] => { Term::unary_operation(UnaryOp::Not, term![$a]) };
+    [$a:tt + $b:tt] => { Term::binary_operation(term![$a], BinOp::Add, term![$b]) };
+    [$a:tt - $b:tt] => { Term::binary_operation(term![$a], BinOp::Sub, term![$b]) };
+    [$a:tt * $b:tt] => { Term::binary_operation(term![$a], BinOp::Mul, term![$b]) };
+    [$a:tt ^ $b:tt] => { Term::binary_operation(term![$a], BinOp::Exp, term![$b]) };
+    [$a:tt / $b:tt] => { Term::binary_operation(term![$a], BinOp::Div, term![$b]) };
+    [$a:tt % $b:tt] => { Term::binary_operation(term![$a], BinOp::Rem, term![$b]) };
+    [$a:tt $(or $b:tt)+] => { Term::Choice(Pool::set([term![$a], $(term![$b]),+])) };
+    [$i:tt..$j:tt] => { Term::Choice(Pool::interval(term![$i], term![$j])) };
+    [$a:literal] => { Term::Constant(Constant::Number($a)) };
+    [$s:ident] => {
+        // Prolog/ASP surface syntax: names of constants start with a lowercase
+        // letter, and the names of variables start with an uppercase letter or
+        // underscore.
+        if stringify!($s).chars().take(1).all(char::is_lowercase) {
+            Term::Constant(constant![$s])
+        } else {
+            Term::Variable(sym![$s])
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! atom {
+    // We need a little tt-muncher to delimit arguments.
+    // This may be problematic as the term syntax grows.
+    [@args [] [] -> [$($args:tt)*]] => {{
+        let mut v = vec![$($args)*]; v.reverse(); v
+    }};
+    [@args [] [$($partial:tt)*] -> [$($args:tt)*]] => {
+        atom![@args [] [] -> [term![$($partial)*], $($args)*]]
+    };
+    [@args [, $($rest:tt)*] [] -> [$($args:tt)*]] => {
+        atom![@args [$($rest)*] [] -> [$($args)*]]
+    };
+    [@args [, $($rest:tt)*] [$($partial:tt)+] -> [$($args:tt)*]] => {
+        atom![@args [$($rest)*] [] -> [term![$($partial)+], $($args)*]]
+    };
+    [@args [.. $j:literal $($rest:tt)*] [$i:literal $($partial:tt)*] -> [$($args:tt)*]] => {
+        atom![@args [$($rest)*] [$($partial)*] -> [term![$i..$j], $($args)*]]
+    };
+    [@args [($($term:tt)*) $($rest:tt)*] [$($partial:tt)*] -> [$($args:tt)*]] => {
+        atom![@args [$($rest)*] [$($partial)*] -> [term![($($term)*)], $($args)*]]
+    };
+    [@args [$pred:ident $($rest:tt)*] [$($partial:tt)*] -> [$($args:tt)*]] => {
+        atom![@args [$($rest)*] [$pred $($partial)*] -> [$($args)*]]
+    };
+    [@args [$i:literal $($rest:tt)*] [$($partial:tt)*] -> [$($args:tt)*]] => {
+        atom![@args [$($rest)*] [$i $($partial)*] -> [$($args)*]]
+    };
+
+    // And another to delimit disjuncts in choice rules.
+    // It would be nice if this could share code with lit!
+    [@agg [] [] -> [$($agg:tt)*]] => {{
+        let mut v = vec![$($agg)*]; v.reverse(); v
+    }};
+    [@agg [] [$($partial:tt)*] -> [$($agg:tt)*]] => {
+        atom![@agg [] [] -> [Literal::Positive(atom![$($partial)*]), $($agg)*]]
+    };
+    [@agg [not not $($rest:tt)*] [] -> [$($agg:tt)*]] => {
+        atom![@agg [$($rest)*] [not not] -> [$($agg)*]]
+    };
+    [@agg [not $($rest:tt)*] [] -> [$($agg:tt)*]] => {
+        atom![@agg [$($rest)*] [not] -> [$($agg)*]]
+    };
+    [@agg [or $($rest:tt)*] [] -> [$($agg:tt)*]] => {
+        atom![@agg [$($rest)*] [] -> [$($agg)*]]
+    };
+    [@agg [or $($rest:tt)*] [not not $($partial:tt)*] -> [$($agg:tt)*]] => {
+        atom![@agg [$($rest)*] [] -> [Literal::DoubleNegative(atom![$($partial)*]), $($agg)*]]
+    };
+    [@agg [or $($rest:tt)*] [not $($partial:tt)*] -> [$($agg:tt)*]] => {
+        atom![@agg [$($rest)*] [] -> [Literal::Negative(atom![$($partial)*]), $($agg)*]]
+    };
+    [@agg [or $($rest:tt)*] [$($partial:tt)*] -> [$($agg:tt)*]] => {
+        atom![@agg [$($rest)*] [] -> [Literal::Positive(atom![$($partial)*]), $($agg)*]]
+    };
+    [@agg [$pred:ident($($args:tt)*) $($rest:tt)*] [not not] -> [$($agg:tt)*]] => {
+        atom![@agg [$($rest)*] [] -> [Literal::DoubleNegative(atom![$pred($($args)*)]), $($agg)*]]
+    };
+    [@agg [$pred:ident $($rest:tt)*] [not not] -> [$($agg:tt)*]] => {
+        atom![@agg [$($rest)*] [not not $pred] -> [$($agg)*]]
+    };
+    [@agg [$pred:ident($($args:tt)*) $($rest:tt)*] [not] -> [$($agg:tt)*]] => {
+        atom![@agg [$($rest)*] [not $pred($($args)*)] -> [$($agg)*]]
+    };
+    [@agg [$pred:ident $($rest:tt)*] [not] -> [$($agg:tt)*]] => {
+        atom![@agg [$($rest)*] [not $pred] -> [$($agg)*]]
+    };
+    [@agg [$pred:ident($($args:tt)*) $($rest:tt)*] [] -> [$($agg:tt)*]] => {
+        atom![@agg [$($rest)*] [$pred($($args)*)] -> [$($agg)*]]
+    };
+    [@agg [$pred:ident $($rest:tt)*] [] -> [$($agg:tt)*]] => {
+        atom![@agg [$($rest)*] [$pred] -> [$($agg)*]]
+    };
+
+    // Lparse-style cardinality bounds.
+    // TODO: combinations, arbitrary comparisons.
+    [$lb:literal {$($agg:tt)*} $ub:literal] => {
+        Atom::<Term>::agg(
+            atom![@agg [$($agg)*] [] -> []],
+            Some(AggregateBounds::new(term![$lb], term![$ub]))
+        )
+    };
+    [{$($agg:tt)*}] => { Atom::<Term>::agg(atom![@agg [$($agg)*] [] -> []], None) };
+    [$pred:ident($($args:tt)*)] => { Atom::<Term>::app(sym![$pred], atom![@args [$($args)*] [] -> []]) };
+    [$pred:ident] => { Atom::<Term>::app(sym![$pred], vec![]) };
+}
+
+#[macro_export]
+macro_rules! lit {
+    [($($lit:tt)*)] => { lit![$($lit)*] };
+    [{$($atom:tt)*}] => { Literal::Positive(atom![{$($atom)*}]) };
+    [$x:tt = $y:tt] => { Literal::relation(term![$x], RelOp::Eq, term![$y]) };
+    [$x:tt != $y:tt] => { Literal::relation(term![$x], RelOp::Ne, term![$y]) };
+    [$x:tt < $y:tt] => { Literal::relation(term![$x], RelOp::Lt, term![$y]) };
+    [$x:tt > $y:tt] => { Literal::relation(term![$x], RelOp::Gt, term![$y]) };
+    [$x:tt <= $y:tt] => { Literal::relation(term![$x], RelOp::Leq, term![$y]) };
+    [$x:tt >= $y:tt] => { Literal::relation(term![$x], RelOp::Geq, term![$y]) };
+    [not not $pred:ident($($arg:tt)*)] => { Literal::DoubleNegative(atom![$pred($($arg)*)]) };
+    [not not $pred:ident] => { Literal::DoubleNegative(atom![$pred]) };
+    [not $pred:ident($($arg:tt)*)] => { Literal::Negative(atom![$pred($($arg)*)]) };
+    [not $pred:ident] => { Literal::Negative(atom![$pred]) };
+    [$pred:ident($($arg:tt)*)] => { Literal::Positive(atom![$pred($($arg)*)]) };
+    [$pred:ident] => { Literal::Positive(atom![$pred]) };
+}
+
+/// An auxiliary macro with "internal" tt-munching rules of the form:
+/// `[@internal [unprocessed] -> [accumulator] [carry]] => { ... }`.
+/// We need the auxiliary so we don't infinitely recurse matching `[$($rest)*]`.
+#[macro_export]
+macro_rules! rule_aux {
+    // Common literal muncher: $next will be @head or @body.
+    [@lit @$next:ident [($($lit:tt)*) $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
+        rule_aux![@$next [$($rest)*] -> [lit![($($lit)*)], $($acc)*] [$($carry)*]]
+    };
+    [@lit @$next:ident [$x:tt = $y:tt $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
+        rule_aux![@$next [$($rest)*] -> [lit![$x = $y], $($acc)*] [$($carry)*]]
+    };
+    [@lit @$next:ident [$x:tt != $y:tt $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
+        rule_aux![@$next [$($rest)*] -> [lit![$x != $y], $($acc)*] [$($carry)*]]
+    };
+    [@lit @$next:ident [$x:tt < $y:tt $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
+        rule_aux![@$next [$($rest)*] -> [lit![$x < $y], $($acc)*] [$($carry)*]]
+    };
+    [@lit @$next:ident [$x:tt > $y:tt $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
+        rule_aux![@$next [$($rest)*] -> [lit![$x > $y], $($acc)*] [$($carry)*]]
+    };
+    [@lit @$next:ident [$x:tt <= $y:tt $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
+        rule_aux![@$next [$($rest)*] -> [lit![$x <= $y], $($acc)*] [$($carry)*]]
+    };
+    [@lit @$next:ident [$x:tt >= $y:tt $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
+        rule_aux![@$next [$($rest)*] -> [lit![$x >= $y], $($acc)*] [$($carry)*]]
+    };
+    [@lit @$next:ident [not not $pred:ident($($args:tt)*) $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
+        rule_aux![@$next [$($rest)*] -> [lit![not not $pred($($args)*)], $($acc)*] [$($carry)*]]
+    };
+    [@lit @$next:ident [not not $pred:ident $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
+        rule_aux![@$next [$($rest)*] -> [lit![not not $pred], $($acc)*] [$($carry)*]]
+    };
+    [@lit @$next:ident [not $pred:ident($($args:tt)*) $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
+        rule_aux![@$next [$($rest)*] -> [lit![not $pred($($args)*)], $($acc)*] [$($carry)*]]
+    };
+    [@lit @$next:ident [not $pred:ident $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
+        rule_aux![@$next [$($rest)*] -> [lit![not $pred], $($acc)*] [$($carry)*]]
+    };
+    [@lit @$next:ident [$pred:ident($($args:tt)*) $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
+        rule_aux![@$next [$($rest)*] -> [lit![$pred($($args)*)], $($acc)*] [$($carry)*]]
+    };
+    [@lit @$next:ident [$pred:ident $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
+        rule_aux![@$next [$($rest)*] -> [lit![$pred], $($acc)*] [$($carry)*]]
+    };
+    [@lit @$next:ident [$($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
+        rule_aux![@$next [$($rest)*] -> [$($acc)*] [$($carry)*]]
+    };
+
+    // Head base cases: no more tokens in the head, punt to the body muncher.
+    [@head [] -> [$($head:tt)*] []] => {
+        rule_aux![@body [] -> [] [$($head)*]]
+    };
+    [@head [if $($body:tt)*] -> [$($head:tt)*] []] => {
+        rule_aux![@body [$($body)*] -> [] [$($head)*]]
+    };
+
+    // Accumulate disjunction of head literals.
+    [@head [and $($rest:tt)*] -> [$($head:tt)*] []] => {
+        compile_error!("only disjunctions allowed in rule heads")
+    };
+    [@head [or $($rest:tt)*] -> [$($head:tt)*] []] => {
+        rule_aux![@lit @head [$($rest)*] -> [$($head)*] []]
+    };
+    [@head [$($rest:tt)*] -> [$($head:tt)*] []] => {
+        rule_aux![@lit @head [$($rest)*] -> [$($head)*] []]
+    };
+
+    // Choice rules have a single aggregate atom as head, and may
+    // include bounds. To dodge the combinatorics, we accept only
+    // no bounds, or both bounds.
+    [@choice [$lb:literal {$($choice:tt)*} $ub:literal  if $($body:tt)*] -> [] []] => {
+        rule_aux![@body [$($body)*] -> [] [$lb {$($choice)*} $ub]]
+    };
+    [@choice [$lb:literal {$($choice:tt)*} $ub:literal] -> [] []] => {
+        rule_aux![@body [] -> [] [$lb {$($choice)*} $ub]]
+    };
+    [@choice [{$($choice:tt)*} if $($body:tt)*] -> [] []] => {
+        rule_aux![@body [$($body)*] -> [] [{$($choice)*}]]
+    };
+    [@choice [{$($choice:tt)*}] -> [] []] => {
+        rule_aux![@body [] -> [] [{$($choice)*}]]
+    };
+
+    // Choice rule body base cases.
+    [@body [] -> [$($body:tt)*] [$lb:literal {$($choice:tt)*} $ub:literal]] => {{
+        let head = match atom![$lb {$($choice)*} $ub] {
+            Atom::Agg(agg) => agg,
+            _ => unimplemented!("invalid bounded choice rule"),
+        };
+        let mut body = vec![$($body)*]; body.reverse();
+        BaseRule::Choice(ChoiceRule::new(head, body))
+    }};
+    [@body [] -> [$($body:tt)*] [{$($choice:tt)*}]] => {{
+        let head = match atom![{$($choice)*}] {
+            Atom::Agg(agg) => agg,
+            _ => unimplemented!("invalid choice rule"),
+        };
+        let mut body = vec![$($body)*]; body.reverse();
+        BaseRule::Choice(ChoiceRule::new(head, body))
+    }};
+
+    // Disjunctive rule body base case.
+    [@body [] -> [$($body:tt)*] [$($head:tt)*]] => {{
+        let mut head = vec![$($head)*]; head.reverse();
+        let mut body = vec![$($body)*]; body.reverse();
+        BaseRule::Disjunctive(Rule::new(head, body))
+    }};
+
+    // Accumulate conjunction of body literals and carry the head.
+    [@body [and $($rest:tt)*] -> [$($body:tt)*] [$($head:tt)*]] => {
+        rule_aux![@lit @body [$($rest)*] -> [$($body)*] [$($head)*]]
+    };
+    [@body [or $($rest:tt)*] -> [$($body:tt)*] [$($head:tt)*]] => {
+        compile_error!("only conjunctions allowed in rule bodies")
+    };
+    [@body [if $($rest:tt)*] -> [$($body:tt)*] [$($head:tt)*]] => {
+        compile_error!("only one body allowed per rule")
+    };
+    [@body [$($rest:tt)*] -> [$($body:tt)*] [$($head:tt)*]] => {
+        rule_aux![@lit @body [$($rest)*] -> [$($body)*] [$($head)*]]
+    };
+}
+
+#[macro_export]
+macro_rules! rule {
+    // Top level: punt to auxiliary macro.
+    [$lb:literal {$($choice:tt)*} $ub:literal if $($body:tt)*] => {
+        rule_aux![@choice [$lb {$($choice)*} $ub if $($body)*] -> [] []]
+    };
+    [$lb:literal {$($choice:tt)*} $ub:literal] => {
+        rule_aux![@choice [$lb {$($choice)*} $ub] -> [] []]
+    };
+    [{$($choice:tt)*} if $($body:tt)*] => {
+        rule_aux![@choice [{$($choice)*} if $($body)*] -> [] []]
+    };
+    [{$($choice:tt)*}] => {
+        rule_aux![@choice [{$($choice)*}] -> [] []]
+    };
+    [if $($body:tt)*] => {
+        rule_aux![@body [$($body)*] -> [] []]
+    };
+    [$($rest:tt)*] => {
+        rule_aux![@head [$($rest)*] -> [] []]
+    };
+}
+
+// Ground variants.
+#[macro_export]
+macro_rules! gatom {
+    [$($x:tt)*] => { atom![$($x)*].ground() };
+}
+
+#[macro_export]
+macro_rules! glit {
+    [$($lit:tt)*] => { lit![$($lit)*].ground() };
+}
+
 #[cfg(test)]
 #[macro_use]
-pub(crate) mod test {
+pub mod test {
     use super::*;
-
-    macro_rules! sym {
-        [$s:ident] => {
-            Symbol::new(String::from(stringify!($s)))
-        };
-    }
 
     #[test]
     fn symbol() {
         assert_eq!(sym![a], Symbol::new(String::from("a")));
         assert_eq!(sym![a], sym![a]);
         assert_ne!(sym![a], sym![b]);
-    }
-
-    macro_rules! constant {
-        [($($c:tt)*)] => { constant![$($c)*] };
-        [$s:ident] => { Constant::Name(sym![$s]) };
-        [$i:literal] => { Constant::Number($i) };
-        [-$i:literal] => { Constant::Number(-$i) };
     }
 
     #[test]
@@ -620,34 +1036,6 @@ pub(crate) mod test {
         assert_eq!(constant![0], 0.into());
         assert_eq!(constant![-1], (-1).into());
         assert_ne!(constant![-1], 1.into());
-    }
-
-    macro_rules! term {
-        [($($term:tt)*)] => { term![$($term)*] };
-        [|($($term:tt)*)|] => { Term::unary_operation(UnaryOp::Abs, term![$($term)*]) };
-        [|$a:tt|] => { Term::unary_operation(UnaryOp::Abs, term![$a]) };
-        [-$a:literal] => { Term::Constant(Constant::Number(-$a)) };
-        [-$a:tt] => { Term::unary_operation(UnaryOp::Neg, term![$a]) };
-        [~$a:tt] => { Term::unary_operation(UnaryOp::Not, term![$a]) };
-        [$a:tt + $b:tt] => { Term::binary_operation(term![$a], BinOp::Add, term![$b]) };
-        [$a:tt - $b:tt] => { Term::binary_operation(term![$a], BinOp::Sub, term![$b]) };
-        [$a:tt * $b:tt] => { Term::binary_operation(term![$a], BinOp::Mul, term![$b]) };
-        [$a:tt ^ $b:tt] => { Term::binary_operation(term![$a], BinOp::Exp, term![$b]) };
-        [$a:tt / $b:tt] => { Term::binary_operation(term![$a], BinOp::Div, term![$b]) };
-        [$a:tt % $b:tt] => { Term::binary_operation(term![$a], BinOp::Rem, term![$b]) };
-        [$a:tt $(or $b:tt)+] => { Term::Choice(Pool::set([term![$a], $(term![$b]),+])) };
-        [$i:tt..$j:tt] => { Term::Choice(Pool::interval(term![$i], term![$j])) };
-        [$a:literal] => { Term::Constant(Constant::Number($a)) };
-        [$s:ident] => {
-            // Prolog/ASP surface syntax: names of constants start with a lowercase
-            // letter, and the names of variables start with an uppercase letter or
-            // underscore.
-            if stringify!($s).chars().take(1).all(char::is_lowercase) {
-                Term::Constant(constant![$s])
-            } else {
-                Term::Variable(sym![$s])
-            }
-        };
     }
 
     #[test]
@@ -680,92 +1068,6 @@ pub(crate) mod test {
             term![1 + 2],
             Term::binary_operation(term![1], BinOp::Add, term![2])
         );
-    }
-
-    macro_rules! atom {
-        // We need a little tt-muncher to delimit arguments.
-        // This may be problematic as the term syntax grows.
-        [@args [] [] -> [$($args:tt)*]] => {{
-            let mut v = vec![$($args)*]; v.reverse(); v
-        }};
-        [@args [] [$($partial:tt)*] -> [$($args:tt)*]] => {
-            atom![@args [] [] -> [term![$($partial)*], $($args)*]]
-        };
-        [@args [, $($rest:tt)*] [] -> [$($args:tt)*]] => {
-            atom![@args [$($rest)*] [] -> [$($args)*]]
-        };
-        [@args [, $($rest:tt)*] [$($partial:tt)+] -> [$($args:tt)*]] => {
-            atom![@args [$($rest)*] [] -> [term![$($partial)+], $($args)*]]
-        };
-        [@args [.. $j:literal $($rest:tt)*] [$i:literal $($partial:tt)*] -> [$($args:tt)*]] => {
-            atom![@args [$($rest)*] [$($partial)*] -> [term![$i..$j], $($args)*]]
-        };
-        [@args [($($term:tt)*) $($rest:tt)*] [$($partial:tt)*] -> [$($args:tt)*]] => {
-            atom![@args [$($rest)*] [$($partial)*] -> [term![($($term)*)], $($args)*]]
-        };
-        [@args [$pred:ident $($rest:tt)*] [$($partial:tt)*] -> [$($args:tt)*]] => {
-            atom![@args [$($rest)*] [$pred $($partial)*] -> [$($args)*]]
-        };
-        [@args [$i:literal $($rest:tt)*] [$($partial:tt)*] -> [$($args:tt)*]] => {
-            atom![@args [$($rest)*] [$i $($partial)*] -> [$($args)*]]
-        };
-
-        // And another to delimit disjuncts in choice rules.
-        // It would be nice if this could share code with lit!
-        [@agg [] [] -> [$($agg:tt)*]] => {{
-            let mut v = vec![$($agg)*]; v.reverse(); v
-        }};
-        [@agg [] [$($partial:tt)*] -> [$($agg:tt)*]] => {
-            atom![@agg [] [] -> [Literal::Positive(atom![$($partial)*]), $($agg)*]]
-        };
-        [@agg [not not $($rest:tt)*] [] -> [$($agg:tt)*]] => {
-            atom![@agg [$($rest)*] [not not] -> [$($agg)*]]
-        };
-        [@agg [not $($rest:tt)*] [] -> [$($agg:tt)*]] => {
-            atom![@agg [$($rest)*] [not] -> [$($agg)*]]
-        };
-        [@agg [or $($rest:tt)*] [] -> [$($agg:tt)*]] => {
-            atom![@agg [$($rest)*] [] -> [$($agg)*]]
-        };
-        [@agg [or $($rest:tt)*] [not not $($partial:tt)*] -> [$($agg:tt)*]] => {
-            atom![@agg [$($rest)*] [] -> [Literal::DoubleNegative(atom![$($partial)*]), $($agg)*]]
-        };
-        [@agg [or $($rest:tt)*] [not $($partial:tt)*] -> [$($agg:tt)*]] => {
-            atom![@agg [$($rest)*] [] -> [Literal::Negative(atom![$($partial)*]), $($agg)*]]
-        };
-        [@agg [or $($rest:tt)*] [$($partial:tt)*] -> [$($agg:tt)*]] => {
-            atom![@agg [$($rest)*] [] -> [Literal::Positive(atom![$($partial)*]), $($agg)*]]
-        };
-        [@agg [$pred:ident($($args:tt)*) $($rest:tt)*] [not not] -> [$($agg:tt)*]] => {
-            atom![@agg [$($rest)*] [] -> [Literal::DoubleNegative(atom![$pred($($args)*)]), $($agg)*]]
-        };
-        [@agg [$pred:ident $($rest:tt)*] [not not] -> [$($agg:tt)*]] => {
-            atom![@agg [$($rest)*] [not not $pred] -> [$($agg)*]]
-        };
-        [@agg [$pred:ident($($args:tt)*) $($rest:tt)*] [not] -> [$($agg:tt)*]] => {
-            atom![@agg [$($rest)*] [not $pred($($args)*)] -> [$($agg)*]]
-        };
-        [@agg [$pred:ident $($rest:tt)*] [not] -> [$($agg:tt)*]] => {
-            atom![@agg [$($rest)*] [not $pred] -> [$($agg)*]]
-        };
-        [@agg [$pred:ident($($args:tt)*) $($rest:tt)*] [] -> [$($agg:tt)*]] => {
-            atom![@agg [$($rest)*] [$pred($($args)*)] -> [$($agg)*]]
-        };
-        [@agg [$pred:ident $($rest:tt)*] [] -> [$($agg:tt)*]] => {
-            atom![@agg [$($rest)*] [$pred] -> [$($agg)*]]
-        };
-
-        // Lparse-style cardinality bounds.
-        // TODO: combinations, arbitrary comparisons.
-        [$lb:literal {$($agg:tt)*} $ub:literal] => {
-            Atom::<Term>::agg(
-                atom![@agg [$($agg)*] [] -> []],
-                Some(AggregateBounds::new(term![$lb], term![$ub]))
-            )
-        };
-        [{$($agg:tt)*}] => { Atom::<Term>::agg(atom![@agg [$($agg)*] [] -> []], None) };
-        [$pred:ident($($args:tt)*)] => { Atom::<Term>::app(sym![$pred], atom![@args [$($args)*] [] -> []]) };
-        [$pred:ident] => { Atom::<Term>::app(sym![$pred], vec![]) };
     }
 
     #[test]
@@ -831,23 +1133,6 @@ pub(crate) mod test {
         );
     }
 
-    macro_rules! lit {
-        [($($lit:tt)*)] => { lit![$($lit)*] };
-        [{$($atom:tt)*}] => { Literal::Positive(atom![{$($atom)*}]) };
-        [$x:tt = $y:tt] => { Literal::relation(term![$x], RelOp::Eq, term![$y]) };
-        [$x:tt != $y:tt] => { Literal::relation(term![$x], RelOp::Ne, term![$y]) };
-        [$x:tt < $y:tt] => { Literal::relation(term![$x], RelOp::Lt, term![$y]) };
-        [$x:tt > $y:tt] => { Literal::relation(term![$x], RelOp::Gt, term![$y]) };
-        [$x:tt <= $y:tt] => { Literal::relation(term![$x], RelOp::Leq, term![$y]) };
-        [$x:tt >= $y:tt] => { Literal::relation(term![$x], RelOp::Geq, term![$y]) };
-        [not not $pred:ident($($arg:tt)*)] => { Literal::DoubleNegative(atom![$pred($($arg)*)]) };
-        [not not $pred:ident] => { Literal::DoubleNegative(atom![$pred]) };
-        [not $pred:ident($($arg:tt)*)] => { Literal::Negative(atom![$pred($($arg)*)]) };
-        [not $pred:ident] => { Literal::Negative(atom![$pred]) };
-        [$pred:ident($($arg:tt)*)] => { Literal::Positive(atom![$pred($($arg)*)]) };
-        [$pred:ident] => { Literal::Positive(atom![$pred]) };
-    }
-
     #[test]
     fn literal() {
         use Literal::*;
@@ -869,160 +1154,6 @@ pub(crate) mod test {
         assert_eq!(lit![0 > 1], rel(term![0], Gt, term![1]));
         assert_eq!(lit![0 <= 1], rel(term![0], Leq, term![1]));
         assert_eq!(lit![0 >= 1], rel(term![0], Geq, term![1]));
-    }
-
-    /// An auxiliary macro with "internal" tt-munching rules of the form:
-    /// `[@internal [unprocessed] -> [accumulator] [carry]] => { ... }`.
-    /// We need the auxiliary so we don't infinitely recurse matching `[$($rest)*]`.
-    macro_rules! rule_aux {
-        // Common literal muncher: $next will be @head or @body.
-        [@lit @$next:ident [($($lit:tt)*) $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-            rule_aux![@$next [$($rest)*] -> [lit![($($lit)*)], $($acc)*] [$($carry)*]]
-        };
-        [@lit @$next:ident [$x:tt = $y:tt $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-            rule_aux![@$next [$($rest)*] -> [lit![$x = $y], $($acc)*] [$($carry)*]]
-        };
-        [@lit @$next:ident [$x:tt != $y:tt $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-            rule_aux![@$next [$($rest)*] -> [lit![$x != $y], $($acc)*] [$($carry)*]]
-        };
-        [@lit @$next:ident [$x:tt < $y:tt $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-            rule_aux![@$next [$($rest)*] -> [lit![$x < $y], $($acc)*] [$($carry)*]]
-        };
-        [@lit @$next:ident [$x:tt > $y:tt $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-            rule_aux![@$next [$($rest)*] -> [lit![$x > $y], $($acc)*] [$($carry)*]]
-        };
-        [@lit @$next:ident [$x:tt <= $y:tt $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-            rule_aux![@$next [$($rest)*] -> [lit![$x <= $y], $($acc)*] [$($carry)*]]
-        };
-        [@lit @$next:ident [$x:tt >= $y:tt $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-            rule_aux![@$next [$($rest)*] -> [lit![$x >= $y], $($acc)*] [$($carry)*]]
-        };
-        [@lit @$next:ident [not not $pred:ident($($args:tt)*) $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-            rule_aux![@$next [$($rest)*] -> [lit![not not $pred($($args)*)], $($acc)*] [$($carry)*]]
-        };
-        [@lit @$next:ident [not not $pred:ident $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-            rule_aux![@$next [$($rest)*] -> [lit![not not $pred], $($acc)*] [$($carry)*]]
-        };
-        [@lit @$next:ident [not $pred:ident($($args:tt)*) $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-            rule_aux![@$next [$($rest)*] -> [lit![not $pred($($args)*)], $($acc)*] [$($carry)*]]
-        };
-        [@lit @$next:ident [not $pred:ident $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-            rule_aux![@$next [$($rest)*] -> [lit![not $pred], $($acc)*] [$($carry)*]]
-        };
-        [@lit @$next:ident [$pred:ident($($args:tt)*) $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-            rule_aux![@$next [$($rest)*] -> [lit![$pred($($args)*)], $($acc)*] [$($carry)*]]
-        };
-        [@lit @$next:ident [$pred:ident $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-            rule_aux![@$next [$($rest)*] -> [lit![$pred], $($acc)*] [$($carry)*]]
-        };
-        [@lit @$next:ident [$($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-            rule_aux![@$next [$($rest)*] -> [$($acc)*] [$($carry)*]]
-        };
-
-        // Head base cases: no more tokens in the head, punt to the body muncher.
-        [@head [] -> [$($head:tt)*] []] => {
-            rule_aux![@body [] -> [] [$($head)*]]
-        };
-        [@head [if $($body:tt)*] -> [$($head:tt)*] []] => {
-            rule_aux![@body [$($body)*] -> [] [$($head)*]]
-        };
-
-        // Accumulate disjunction of head literals.
-        [@head [and $($rest:tt)*] -> [$($head:tt)*] []] => {
-            compile_error!("only disjunctions allowed in rule heads")
-        };
-        [@head [or $($rest:tt)*] -> [$($head:tt)*] []] => {
-            rule_aux![@lit @head [$($rest)*] -> [$($head)*] []]
-        };
-        [@head [$($rest:tt)*] -> [$($head:tt)*] []] => {
-            rule_aux![@lit @head [$($rest)*] -> [$($head)*] []]
-        };
-
-        // Choice rules have a single aggregate atom as head, and may
-        // include bounds. To dodge the combinatorics, we accept only
-        // no bounds, or both bounds.
-        [@choice [$lb:literal {$($choice:tt)*} $ub:literal  if $($body:tt)*] -> [] []] => {
-            rule_aux![@body [$($body)*] -> [] [$lb {$($choice)*} $ub]]
-        };
-        [@choice [$lb:literal {$($choice:tt)*} $ub:literal] -> [] []] => {
-            rule_aux![@body [] -> [] [$lb {$($choice)*} $ub]]
-        };
-        [@choice [{$($choice:tt)*} if $($body:tt)*] -> [] []] => {
-            rule_aux![@body [$($body)*] -> [] [{$($choice)*}]]
-        };
-        [@choice [{$($choice:tt)*}] -> [] []] => {
-            rule_aux![@body [] -> [] [{$($choice)*}]]
-        };
-
-        // Choice rule body base cases.
-        [@body [] -> [$($body:tt)*] [$lb:literal {$($choice:tt)*} $ub:literal]] => {{
-            let head = match atom![$lb {$($choice)*} $ub] {
-                Atom::Agg(agg) => agg,
-                _ => unimplemented!("invalid bounded choice rule"),
-            };
-            let mut body = vec![$($body)*]; body.reverse();
-            BaseRule::Choice(ChoiceRule::new(head, body))
-        }};
-        [@body [] -> [$($body:tt)*] [{$($choice:tt)*}]] => {{
-            let head = match atom![{$($choice)*}] {
-                Atom::Agg(agg) => agg,
-                _ => unimplemented!("invalid choice rule"),
-            };
-            let mut body = vec![$($body)*]; body.reverse();
-            BaseRule::Choice(ChoiceRule::new(head, body))
-        }};
-
-        // Disjunctive rule body base case.
-        [@body [] -> [$($body:tt)*] [$($head:tt)*]] => {{
-            let mut head = vec![$($head)*]; head.reverse();
-            let mut body = vec![$($body)*]; body.reverse();
-            BaseRule::Disjunctive(Rule::new(head, body))
-        }};
-
-        // Accumulate conjunction of body literals and carry the head.
-        [@body [and $($rest:tt)*] -> [$($body:tt)*] [$($head:tt)*]] => {
-            rule_aux![@lit @body [$($rest)*] -> [$($body)*] [$($head)*]]
-        };
-        [@body [or $($rest:tt)*] -> [$($body:tt)*] [$($head:tt)*]] => {
-            compile_error!("only conjunctions allowed in rule bodies")
-        };
-        [@body [if $($rest:tt)*] -> [$($body:tt)*] [$($head:tt)*]] => {
-            compile_error!("only one body allowed per rule")
-        };
-        [@body [$($rest:tt)*] -> [$($body:tt)*] [$($head:tt)*]] => {
-            rule_aux![@lit @body [$($rest)*] -> [$($body)*] [$($head)*]]
-        };
-    }
-
-    macro_rules! rule {
-        // Top level: punt to auxiliary macro.
-        [$lb:literal {$($choice:tt)*} $ub:literal if $($body:tt)*] => {
-            rule_aux![@choice [$lb {$($choice)*} $ub if $($body)*] -> [] []]
-        };
-        [$lb:literal {$($choice:tt)*} $ub:literal] => {
-            rule_aux![@choice [$lb {$($choice)*} $ub] -> [] []]
-        };
-        [{$($choice:tt)*} if $($body:tt)*] => {
-            rule_aux![@choice [{$($choice)*} if $($body)*] -> [] []]
-        };
-        [{$($choice:tt)*}] => {
-            rule_aux![@choice [{$($choice)*}] -> [] []]
-        };
-        [if $($body:tt)*] => {
-            rule_aux![@body [$($body)*] -> [] []]
-        };
-        [$($rest:tt)*] => {
-            rule_aux![@head [$($rest)*] -> [] []]
-        };
-    }
-
-    // Ground variants.
-    macro_rules! gatom {
-        [$($x:tt)*] => { atom![$($x)*].ground() };
-    }
-
-    macro_rules! glit {
-        [$($lit:tt)*] => { lit![$($lit)*].ground() };
     }
 
     #[test]
