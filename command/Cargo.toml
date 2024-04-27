@@ -1,0 +1,12 @@
+[package]
+name = "minuet-command"
+version = "0.0.1"
+edition = "2021"
+
+[[bin]]
+name = "minuet"
+path = "minuet.rs"
+
+[dependencies]
+minuet-semantics = { path = "../semantics" }
+minuet-tracer = { path = "../tracer" }

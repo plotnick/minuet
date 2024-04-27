@@ -19,12 +19,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8eb53f38e7f2e30ad98faf6a15a3b1135c45a1b9740f71fba53438437bf2a25"
 
 [[package]]
-name = "minuet"
+name = "minuet-command"
 version = "0.0.1"
 dependencies = [
  "minuet-semantics",
- "minuet-solver",
- "minuet-syntax",
  "minuet-tracer",
 ]
 

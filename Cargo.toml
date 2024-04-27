@@ -1,16 +1,6 @@
 [workspace]
-members = ["semantics", "solver", "syntax", "tracer"]
+members = ["command", "semantics", "solver", "syntax", "tracer"]
+resolver = "2"
 
 [workspace.dependencies]
 gray-codes = "0.1"
-
-[package]
-name = "minuet"
-version = "0.0.1"
-edition = "2021"
-
-[dependencies]
-minuet-semantics = { path = "semantics" }
-minuet-solver = { path = "solver" }
-minuet-syntax = { path = "syntax" }
-minuet-tracer = { path = "tracer" }
