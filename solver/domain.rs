@@ -10,6 +10,7 @@ use std::fmt;
 /// A finite domain `D` with reversible element deletion.
 pub trait Domain<T> {
     /// Is `x ∈ D`?
+    #[allow(dead_code)]
     fn contains(&self, x: &T) -> bool;
 
     /// If `x ∈ D`, delete it and return `true`, otherwise return `false`.
@@ -19,6 +20,7 @@ pub trait Domain<T> {
     fn deleted(&self, n: usize) -> &[T];
 
     /// Get a reference to the first item.
+    #[allow(dead_code)]
     fn first(&self) -> Option<&T> {
         self.get(0)
     }

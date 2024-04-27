@@ -23,7 +23,15 @@ name = "minuet"
 version = "0.0.1"
 dependencies = [
  "gray-codes",
+ "minuet-solver",
  "minuet-syntax",
+ "minuet-tracer",
+]
+
+[[package]]
+name = "minuet-solver"
+version = "0.0.1"
+dependencies = [
  "minuet-tracer",
  "thiserror",
 ]

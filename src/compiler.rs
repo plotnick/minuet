@@ -32,15 +32,15 @@ use std::collections::BTreeSet;
 
 use gray_codes::{InclusionExclusion, SetMutation};
 
+use minuet_solver::*;
 use minuet_syntax::*;
 use minuet_tracer::*;
 
 use crate::formula::*;
 use crate::ground::*;
 use crate::semantics::*;
-use crate::solver::*;
 
-pub use crate::solver::XccError; // re-export
+pub use minuet_solver::XccError; // re-export
 
 /// A stable model of the program (Gelfond & Lifschitz 1988).
 pub type AnswerSet = Model;

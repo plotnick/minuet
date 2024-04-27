@@ -19,6 +19,9 @@
 //! `crate::domain` module for details. The memory required for a search
 //! should be constant once the problem is set up.
 
+mod domain;
+mod id;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::string::ToString;

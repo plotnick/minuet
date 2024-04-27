@@ -1,0 +1,11 @@
+[package]
+name = "minuet-solver"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+path = "solver.rs"
+
+[dependencies]
+minuet-tracer = { path = "../tracer" }
+thiserror = "1.0"

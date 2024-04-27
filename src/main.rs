@@ -1,13 +1,10 @@
 mod clause;
 mod compiler;
-mod domain;
 mod formula;
 mod generate;
 mod ground;
-mod id;
 mod image;
 mod semantics;
-mod solver;
 mod values;
 
 use minuet_tracer::Trace;
