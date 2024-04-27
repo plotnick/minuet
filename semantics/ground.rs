@@ -7,8 +7,8 @@ use std::fmt;
 use minuet_syntax::*;
 
 use crate::generate::combinations_mixed;
-use crate::semantics::Program;
 use crate::values::Values as _;
+use crate::Program;
 
 /// Map variable names to constant values (in order to ground them).
 pub type Bindings = BTreeMap<Symbol, Constant>;
@@ -22,15 +22,6 @@ pub type Universe = BTreeSet<Constant>;
 
 /// Terms that can contain variables may be _grounded_, wherein we replace
 /// all variables with all possible values that can be bound to them.
-///
-/// The `Ground` associated type represents the _result_ of the grounding,
-/// e.g., we go from `Rule<Term>` → `Rule<GroundTerm>` via:
-/// ```
-/// impl Groundable for Rule<Term> {
-///     type Ground = Rule<GroundTerm>;
-///     ...
-/// }
-/// ```
 pub trait Groundable {
     type Ground;
 

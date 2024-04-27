@@ -1,6 +1,9 @@
-//! Meaning-preserving manipulation of logic programs: ground all variables,
-//! normalize propositional images, and complete rules by transforming them
-//! from implications into equivalences.
+//! A program is a collection of rules, which we'll preprocess prior to
+//! compilation in a strict sequence of meaning-preserving steps. Each
+//! step generates a new (potentially exponentially larger) program of a
+//! different type. There is a unique method of one argument (trace level)
+//! on each program type that advances to the next step; e.g., `ground`,
+//! `image`, `normalize`, `shift`, `complete`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -14,12 +17,7 @@ use crate::formula::{Atoms, Formula, Interpretation};
 use crate::ground::{GroundTerm, Groundable as _};
 use crate::image::{Bounds as _, Context, PropositionalImage as _};
 
-/// A program is a collection of rules, which we'll preprocess prior to
-/// compilation in a strict sequence of meaning-preserving steps. Each
-/// step generates a new (potentially exponentially larger) program of a
-/// different type. There is a unique method of one argument (trace level)
-/// on each program type that advances to the next step; e.g., `ground`,
-/// `image`, `normalize`, `shift`, `complete`.
+/// A collection of rules.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Program<R>(Vec<R>);
 
@@ -30,10 +28,6 @@ impl<R> Program<R> {
 
     pub fn iter(&self) -> impl Iterator<Item = &R> {
         self.0.iter()
-    }
-
-    pub fn into_iter(self) -> impl Iterator<Item = R> {
-        self.0.into_iter()
     }
 
     pub fn len(&self) -> usize {
@@ -74,6 +68,15 @@ impl<R> Index<usize> for Program<R> {
 
     fn index(&self, index: usize) -> &Self::Output {
         self.0.index(index)
+    }
+}
+
+impl<R> IntoIterator for Program<R> {
+    type Item = R;
+    type IntoIter = <Vec<R> as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
     }
 }
 

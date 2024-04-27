@@ -1,12 +1,13 @@
 [package]
-name = "minuet-solver"
+name = "minuet-semantics"
 version = "0.0.1"
 edition = "2021"
 
 [lib]
-path = "solver.rs"
+path = "semantics.rs"
 
 [dependencies]
 gray-codes.workspace = true
+minuet-solver = { path = "../solver" }
+minuet-syntax = { path = "../syntax" }
 minuet-tracer = { path = "../tracer" }
-thiserror = "1.0"

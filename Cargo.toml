@@ -1,4 +1,8 @@
-workspace = { members = ["solver", "syntax", "tracer"] }
+[workspace]
+members = ["semantics", "solver", "syntax", "tracer"]
+
+[workspace.dependencies]
+gray-codes = "0.1"
 
 [package]
 name = "minuet"
@@ -6,9 +10,7 @@ version = "0.0.1"
 edition = "2021"
 
 [dependencies]
-gray-codes = "0.1"
+minuet-semantics = { path = "semantics" }
 minuet-solver = { path = "solver" }
 minuet-syntax = { path = "syntax" }
 minuet-tracer = { path = "tracer" }
-
-[dev-dependencies]

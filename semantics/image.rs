@@ -170,7 +170,7 @@ mod test {
 
     use minuet_tracer::Trace;
 
-    use crate::semantics::{Program, PropositionalRule};
+    use crate::program::{Program, PropositionalRule};
 
     #[test]
     fn atomic_image() {

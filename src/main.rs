@@ -1,15 +1,5 @@
-mod clause;
-mod compiler;
-mod formula;
-mod generate;
-mod ground;
-mod image;
-mod semantics;
-mod values;
-
+use minuet_semantics::{XccCompiler, XccError};
 use minuet_tracer::Trace;
-
-use compiler::{XccCompiler, XccError};
 
 fn main() -> Result<(), XccError<String, String>> {
     let xcc = XccCompiler::new(vec![], Trace::all()).unwrap();

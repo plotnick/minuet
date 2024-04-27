@@ -22,6 +22,16 @@ checksum = "a8eb53f38e7f2e30ad98faf6a15a3b1135c45a1b9740f71fba53438437bf2a25"
 name = "minuet"
 version = "0.0.1"
 dependencies = [
+ "minuet-semantics",
+ "minuet-solver",
+ "minuet-syntax",
+ "minuet-tracer",
+]
+
+[[package]]
+name = "minuet-semantics"
+version = "0.0.1"
+dependencies = [
  "gray-codes",
  "minuet-solver",
  "minuet-syntax",
@@ -32,6 +42,7 @@ dependencies = [
 name = "minuet-solver"
 version = "0.0.1"
 dependencies = [
+ "gray-codes",
  "minuet-tracer",
  "thiserror",
 ]
