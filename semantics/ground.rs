@@ -41,7 +41,7 @@ pub trait Groundable {
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum GroundTerm {
     Constant(Constant),
-    Choice(Pool<GroundTerm>),
+    Pool(Pool<GroundTerm>),
     UnaryOperation(UnaryOp, Box<GroundTerm>),
     BinaryOperation(Box<GroundTerm>, BinOp, Box<GroundTerm>),
 }
@@ -70,7 +70,7 @@ impl fmt::Display for GroundTerm {
         use UnaryOp::*;
         match self {
             Constant(x) => x.fmt(f),
-            Choice(x) => x.fmt(f),
+            Pool(x) => x.fmt(f),
             UnaryOperation(Abs, x) => f.write_fmt(format_args!("|{x}|")),
             UnaryOperation(Neg, x) => f.write_fmt(format_args!("-{x}")),
             UnaryOperation(Not, x) => f.write_fmt(format_args!("~{x}")),
@@ -87,7 +87,7 @@ impl Groundable for Term {
         match self {
             Constant(_) => true,
             Variable(_) => false,
-            Choice(p) => p.is_ground(),
+            Pool(p) => p.is_ground(),
             UnaryOperation(_op, x) => x.is_ground(),
             BinaryOperation(x, _op, y) => x.is_ground() && y.is_ground(),
         }
@@ -96,7 +96,7 @@ impl Groundable for Term {
     fn ground_with(self, bindings: &Bindings) -> GroundTerm {
         match self {
             Term::Constant(c) => GroundTerm::Constant(c),
-            Term::Choice(p) => GroundTerm::Choice(p.ground_with(bindings)),
+            Term::Pool(p) => GroundTerm::Pool(p.ground_with(bindings)),
             Term::Variable(name) => GroundTerm::Constant(bindings[&name].clone()),
             Term::UnaryOperation(op, x) => GroundTerm::unary_operation(op, x.ground_with(bindings)),
             Term::BinaryOperation(x, op, y) => {
@@ -109,7 +109,7 @@ impl Groundable for Term {
         use Term::*;
         match self {
             Constant(c) => universe.extend([c.clone()]),
-            Choice(c) => c.constants(universe),
+            Pool(c) => c.constants(universe),
             Variable(..) | BinaryOperation(..) | UnaryOperation(..) => (),
         }
     }

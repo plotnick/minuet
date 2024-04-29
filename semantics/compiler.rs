@@ -348,19 +348,27 @@ impl<'a> Iterator for AnswerStep<'a> {
 
 #[cfg(test)]
 mod test {
+    use minuet_macro::minuet;
+
+    use crate::ground::Groundable as _;
+
     use super::*;
 
     macro_rules! answer_set {
-        {$($head:ident$(($($arg:tt),*))?),*} => {
-            [$(atom![$head$(($($arg),*))?].ground()),*]
-                .into_iter()
-                .collect::<AnswerSet>()
+        {$($pred:ident($($arg:tt),*)),*} => {
+            [
+                $(Atom::<Term>::App(
+                Application::<Term>::new(
+                    Symbol::from(stringify!($pred)),
+                    [$(Term::Constant($arg.into())),*]
+                )).ground()),*
+            ].into_iter().collect::<AnswerSet>()
         }
     }
 
     macro_rules! assert_answers {
-        ($answers:expr, [$({$($head:ident$(($($arg:tt),*))?),* $(,)?}),* $(,)?]) => {{
-            let expected = [$(answer_set!{$($head$(($($arg),*))?),*}),*];
+        ($answers:expr, [$({$($pred:ident($($arg:expr),*)),* $(,)?}),* $(,)?]) => {{
+            let expected = [$(answer_set!{$($pred($($arg),*)),*}),*];
             assert!($answers == expected,
                     "Expected answer sets:\n  [{}]\nGot answer sets:\n  [{}]",
                     expected.iter().map(format_answer).collect::<Vec<_>>().join(", "),
@@ -369,39 +377,23 @@ mod test {
     }
 
     #[test]
-    fn trivial_0() {
+    fn trivial() {
         let xcc = XccCompiler::new([], Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{}]);
     }
 
     #[test]
-    fn trivial_1() {
-        let rules = [rule![p]];
-        let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
-        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{ p }]);
-    }
-
-    #[test]
-    fn trivial_2() {
-        let rules = [rule![p if q], rule![q]];
-        let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
-        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{p, q}]);
-    }
-
-    #[test]
     fn arg_0() {
-        let rules = [rule![p()]];
+        let rules = minuet![p()];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{ p }]);
+        assert_answers!(answers[..], [{ p() }]);
     }
 
     #[test]
     fn arg_1() {
-        let rules = [rule![p(1)]];
+        let rules = minuet![p(1)];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{ p(1) }]);
@@ -409,7 +401,7 @@ mod test {
 
     #[test]
     fn arg_2() {
-        let rules = [rule![p(1, 2)]];
+        let rules = minuet![p(1, 2)];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{ p(1, 2) }]);
@@ -417,7 +409,7 @@ mod test {
 
     #[test]
     fn constraint_1() {
-        let rules = [rule![if p]];
+        let rules = minuet![if p()];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{}]);
@@ -425,7 +417,7 @@ mod test {
 
     #[test]
     fn circular_1() {
-        let rules = [rule![p if p]];
+        let rules = minuet![p() if p()];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{}]);
@@ -433,23 +425,23 @@ mod test {
 
     #[test]
     fn disjunctive_1() {
-        let rules = [rule![p or p]];
+        let rules = minuet![p() or p()];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{ p }]);
+        assert_answers!(answers[..], [{ p() }]);
     }
 
     #[test]
     fn disjunctive_2() {
-        let rules = [rule![p or q]];
+        let rules = minuet![p() or q()];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{ q }, { p }]);
+        assert_answers!(answers[..], [{ q() }, { p() }]);
     }
 
     #[test]
     fn relational_0() {
-        let rules = [rule![0 != 0]];
+        let rules = minuet![0 != 0];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], []);
@@ -457,7 +449,7 @@ mod test {
 
     #[test]
     fn relational_1() {
-        let rules = [rule![1 = 1]];
+        let rules = minuet![1 = 1];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{}]);
@@ -465,7 +457,7 @@ mod test {
 
     #[test]
     fn relational_2() {
-        let rules = [rule![0 = 1 or 1 = 1]];
+        let rules = minuet![0 = 1 or 1 = 1];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{}]);
@@ -473,7 +465,7 @@ mod test {
 
     #[test]
     fn arithmetic_0() {
-        let rules = [rule![((0 + 0) = 1)]];
+        let rules = minuet![0 + 0 = 1];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], []);
@@ -481,7 +473,7 @@ mod test {
 
     #[test]
     fn arithmetic_1() {
-        let rules = [rule![((1 + 1) = 2)]];
+        let rules = minuet![1 + 1 = 2];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{}]);
@@ -489,7 +481,7 @@ mod test {
 
     #[test]
     fn arithmetic_1a() {
-        let rules = [rule![((|(-1)|) = 1)]];
+        let rules = minuet![|-1| = 1];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{}]);
@@ -497,7 +489,7 @@ mod test {
 
     #[test]
     fn arithmetic_1s() {
-        let rules = [rule![((foo + bar) = foobar)]];
+        let rules = minuet!["foo" + "bar" = "foobar"];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{}]);
@@ -505,7 +497,7 @@ mod test {
 
     #[test]
     fn arithmetic_2() {
-        let rules = [rule![((2 - 1) = 1)]];
+        let rules = minuet![2 - 1 = 1];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{}]);
@@ -513,7 +505,7 @@ mod test {
 
     #[test]
     fn arithmetic_2s() {
-        let rules = [rule![((foobar - bar) = foo)]];
+        let rules = minuet!["foobar" - "bar" = "foo"];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{}]);
@@ -521,23 +513,31 @@ mod test {
 
     #[test]
     fn arithmetic_3() {
-        let rules = [rule![(0 = (1 + 1)) or (1 = (2 - 2)) or (3 = (3 + 0))]];
+        let rules = minuet![0 = 1 + 1 or (1 = 2 - 2) or 3 = (3 + 0)];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{}]);
     }
 
     #[test]
-    fn arithmetic_4() {
-        let rules = [rule![p((2 + 2))]];
+    fn arithmetic_4a() {
+        let rules = minuet![p(1 + 2 * 3)]; // lower → higher precedence
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{ p(4) }]);
+        assert_answers!(answers[..], [{ p(7) }]);
+    }
+
+    #[test]
+    fn arithmetic_4b() {
+        let rules = minuet![p(3 * 2 + 1)]; // higher → lower precedence
+        let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{ p(7) }]);
     }
 
     #[test]
     fn interval_0() {
-        let rules = [rule![q(0..0)]];
+        let rules = minuet![q(0..0)];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{ q(0) }]);
@@ -545,7 +545,7 @@ mod test {
 
     #[test]
     fn interval_1() {
-        let rules = [rule![q(1..5)]];
+        let rules = minuet![q(1..5)];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{ q(1), q(2), q(3), q(4), q(5) }]);
@@ -553,7 +553,7 @@ mod test {
 
     #[test]
     fn interval_2() {
-        let rules = [rule![q((1..3), (1..3))]];
+        let rules = minuet![q(1..3, 1..3)];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(
@@ -567,39 +567,48 @@ mod test {
 
     #[test]
     fn interval_3() {
-        let rules = [rule![q(((1..3) - (1..3)))]];
+        let rules = minuet![q((1..3) - (1..3))];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{ q((-2)), q((-1)), q(0), q(1), q(2) }]);
+        assert_answers!(answers[..], [{ q(-2), q(-1), q(0), q(1), q(2) }]);
     }
 
     #[test]
     fn choice_1() {
-        let rules = [rule![{ p }]];
+        let rules = minuet![{ p() }];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{}, { p }]);
+        assert_answers!(answers[..], [{}, { p() }]);
     }
 
     #[test]
     fn choice_2() {
-        let rules = [rule![{ p or q }]];
+        let rules = minuet![{ p() or q() }];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{}, { q }, { p, q }, { p }]);
+        assert_answers!(answers[..], [{}, { q() }, { p(), q() }, { p() }]);
     }
 
     #[test]
     fn choice_3() {
-        let rules = [rule![{ p or q or r }]];
+        let rules = minuet![{ p() or q() or r() }];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{}, { r }, { q, r }, { q }, { p, q }, { p }, { p, r }, {p, q, r}]);
+        assert_answers!(answers[..], [
+            {},
+            {r()},
+            {q(), r()},
+            {q()},
+            {p(), q()},
+            {p()},
+            {p(), r()},
+            {p(), q(), r()}
+        ]);
     }
 
     #[test]
     fn choice_4a() {
-        let rules = [rule![{p(1 or 2)}]];
+        let rules = minuet![{p(1 or 2)}];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [
@@ -612,67 +621,75 @@ mod test {
 
     #[test]
     fn choice_4b() {
-        let rules = [rule![{p(a or b, 1 or 2)}]];
+        let rules = minuet![{p("a" or "b", 1 or 2)}];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [
             {},
-            {p(b, 2)},
-            {p(b, 1), p(b, 2)},
-            {p(b, 1)},
-            {p(b, 1), p(a, 2)},
-            {p(a, 2)},
-            {p(a, 2), p(b, 2)},
-            {p(a, 2), p(b, 1), p(b, 2)},
-            {p(a, 2), p(b, 1), p(b, 2), p(a, 1)},
-            {p(a, 1), p(a, 2), p(b, 1)},
-            {p(a, 1), p(b, 1)},
-            {p(a, 1), p(b, 1), p(b, 2)},
-            {p(a, 1), p(b, 2)},
-            {p(a, 1), p(a, 2), p(b, 2)},
-            {p(a, 1), p(a, 2)},
-            {p(a, 1)},
+            {p("b", 2)},
+            {p("b", 1), p("b", 2)},
+            {p("b", 1)},
+            {p("b", 1), p("a", 2)},
+            {p("a", 2)},
+            {p("a", 2), p("b", 2)},
+            {p("a", 2), p("b", 1), p("b", 2)},
+            {p("a", 2), p("b", 1), p("b", 2), p("a", 1)},
+            {p("a", 1), p("a", 2), p("b", 1)},
+            {p("a", 1), p("b", 1)},
+            {p("a", 1), p("b", 1), p("b", 2)},
+            {p("a", 1), p("b", 2)},
+            {p("a", 1), p("a", 2), p("b", 2)},
+            {p("a", 1), p("a", 2)},
+            {p("a", 1)},
         ]);
     }
 
     #[test]
     fn choice_4c() {
-        let rules = [rule![{p(a or X, 1 or Y)} if (X = b) and (Y = 2)]];
+        let rules = minuet![{p("a" or x, 1 or y)} if x = "b" and y = 2];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [
             {},
-            {p(a, 2)},
-            {p(a, 2), p(b, 1)},
-            {p(b, 1)},
-            {p(b, 1), p(b, 2)},
-            {p(b, 2)},
-            {p(a, 2), p(b, 2)},
-            {p(a, 2), p(b, 1), p(b, 2)},
-            {p(a, 1), p(a, 2), p(b, 1), p(b, 2)},
-            {p(a, 1), p(b, 1), p(b, 2)},
-            {p(a, 1), p(b, 1)},
-            {p(a, 1), p(a, 2), p(b, 1)},
-            {p(a, 1), p(a, 2)},
-            {p(a, 1), p(a, 2), p(b, 2)},
-            {p(a, 1), p(b, 2)},
-            {p(a, 1)},
+            {p("a", 2)},
+            {p("a", 2), p("b", 1)},
+            {p("b", 1)},
+            {p("b", 1), p("b", 2)},
+            {p("b", 2)},
+            {p("a", 2), p("b", 2)},
+            {p("a", 2), p("b", 1), p("b", 2)},
+            {p("a", 1), p("a", 2), p("b", 1), p("b", 2)},
+            {p("a", 1), p("b", 1), p("b", 2)},
+            {p("a", 1), p("b", 1)},
+            {p("a", 1), p("a", 2), p("b", 1)},
+            {p("a", 1), p("a", 2)},
+            {p("a", 1), p("a", 2), p("b", 2)},
+            {p("a", 1), p("b", 2)},
+            {p("a", 1)},
         ]);
     }
 
-    /// Lifschitz, "ASP", §5.4. Also Aristotle, Shakespeare ("to p, or not p;
-    /// that is the question"), etc.
+    /// Lifschitz, "ASP", §5.4. Also Aristotle, Shakespeare
+    /// ("to p, or not p; that is the question"), etc.
     #[test]
     fn excluded_middle() {
-        let rules = [rule![p or not p]];
+        let rules = minuet![p() or not p()];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{}, { p }]);
+        assert_answers!(answers[..], [{}, { p() }]);
+    }
+
+    #[test]
+    fn two_rules() {
+        let rules = minuet![p() if q(); q()];
+        let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{p(), q()}]);
     }
 
     #[test]
     fn unsatisfiable() {
-        let rules = [rule![p if q], rule![q], rule![if p]];
+        let rules = minuet![p() if q(); q(); if p()];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], []);
@@ -681,29 +698,30 @@ mod test {
     /// Lifschitz, "From Felicitous Models to Answer Set Programming", §3.
     #[test]
     fn felicitous_3() {
-        let rules = [rule![p], rule![q if p], rule![r if q and s]];
+        let rules = minuet![p(); q() if p(); r() if q() and s()];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{p, q}]);
+        assert_answers!(answers[..], [{p(), q()}]);
     }
 
     /// Lifschitz, "ASP", exercise 2.7.
     #[test]
     fn asp_2_7() {
         // Rule (2.7)
-        let rules = [rule![p(N, ((N*N)+(N+41))) if N = (0..3)]];
+        let rules = minuet![p(n, n*n+n+41) if n = 0..3];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{ p(0, 41), p(1, 43), p(2, 47), p(3, 53) }]);
 
         // Exercise 2.7 (a)
-        let rules = [rule![p(N, ((N*N)+(N+41))) if ((N+1) = (1..4))]];
+        // FIXME: clingo also gets `p(0, 41)`.
+        let rules = minuet![p(n, n*n+n+41) if n+1 = 1..4];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{ p(1, 43), p(2, 47), p(3, 53) }]);
 
         // Exercise 2.7 (b), same answer set as rule (2.7)
-        let rules = [rule![p(N, ((N*N)+(N+41))) if (N = ((-3)..3)) and (N >= 0)]];
+        let rules = minuet![p(n, n*n+n+41) if n = -3..3 and n >= 0];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{ p(0, 41), p(1, 43), p(2, 47), p(3, 53) }]);
@@ -712,7 +730,7 @@ mod test {
     /// Lifschitz, "ASP", exercise 4.3.
     #[test]
     fn asp_4_3() {
-        let rules = [rule![p if q and r], rule![q if p], rule![r if p]];
+        let rules = minuet![p() if q() and r(); q() if p(); r() if p()];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{}]);
@@ -721,78 +739,78 @@ mod test {
     /// Lifschitz, "ASP", etc.
     #[test]
     fn asp_4_13() {
-        let rules = [rule![p or q], rule![r if p], rule![s if q]];
+        let rules = minuet![p() or q(); r() if p(); s() if q()];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{q, s}, {p, r}]);
+        assert_answers!(answers[..], [{q(), s()}, {p(), r()}]);
     }
 
     #[test]
     fn asp_4_34() {
-        let rules = [rule![p(1)], rule![q if p(1..3)]];
+        let rules = minuet![p(1); q() if p(1..3)];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{ p(1), q }]);
+        assert_answers!(answers[..], [{ p(1), q() }]);
     }
 
     #[test]
     fn asp_5_1() {
         // Rules (5.1)-(5.4).
-        let rules = [rule![p], rule![q], rule![r if p and not s], rule![s if q]];
+        let rules = minuet![p(); q(); r() if p() and not s(); s() if q()];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{p, q, s}]);
+        assert_answers!(answers[..], [{p(), q(), s()}]);
 
         // Rules (5.1)-(5.3).
-        let rules = [rule![p], rule![q], rule![r if p and not s]];
+        let rules = minuet![p(); q(); r() if p() and not s()];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{p, q, r}]);
+        assert_answers!(answers[..], [{p(), q(), r()}]);
 
         // Rules (5.1),(5.3),(5.4) (exercise 5.1).
-        let rules = [rule![p], rule![r if p and not s], rule![s if q]];
+        let rules = minuet![p(); r() if p() and not s(); s() if q()];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{p, r}]);
+        assert_answers!(answers[..], [{p(), r()}]);
     }
 
     #[test]
     fn asp_5_2() {
         // Rules (5.6),(5.7).
-        let rules = [rule![p if not q], rule![q if not r]];
+        let rules = minuet![p() if not q(); q() if not r()];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{ q }]);
+        assert_answers!(answers[..], [{ q() }]);
     }
 
     #[test]
     fn asp_5_8() {
         // Rules (5.8),(5.9).
-        let rules = [rule![p if not q], rule![q if not p]];
+        let rules = minuet![p() if not q(); q() if not p()];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{ q }, { p }]);
+        assert_answers!(answers[..], [{ q() }, { p() }]);
     }
 
     #[test]
     fn asp_5_14() {
-        let rules = [rule![p(a)], rule![q(b)], rule![r(X) if p(X) and not q(X)]];
+        let rules = minuet![p("a"); q("b"); r(x) if p(x) and not q(x)];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{ p(a), q(b), r(a) }]);
+        assert_answers!(answers[..], [{ p("a"), q("b"), r("a") }]);
     }
 
     #[test]
     fn asp_5_15() {
-        let rules = [rule![p(1)], rule![q if not p(1..3)]];
+        let rules = minuet![p(1); q() if not p(1..3)];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{ p(1), q }]);
+        assert_answers!(answers[..], [{ p(1), q() }]);
     }
 
     #[test]
     fn asp_5_17() {
-        let rules = [rule![p(1..3)], rule![q(X) if (X = (2..4)) and not p(X)]];
+        let rules = minuet![p(1..3); q(x) if x = 2..4 and not p(x)];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{ p(1), p(2), p(3), q(4) }]);
@@ -800,7 +818,7 @@ mod test {
 
     #[test]
     fn asp_5_18() {
-        let rules = [rule![p(1..4)], rule![q(X) if (X = (1..4)) and not p((X^2))]];
+        let rules = minuet![p(1..4); q(x) if x = 1..4 and not p(x^2)];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{ p(1), p(2), p(3), p(4), q(3), q(4) }]);
@@ -808,23 +826,23 @@ mod test {
 
     #[test]
     fn asp_5_19() {
-        let rules = [rule![{ p(a) }], rule![q(X) if p(X)]];
+        let rules = minuet![{ p("a") }; q(x) if p(x)];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{}, { p(a), q(a) }]);
+        assert_answers!(answers[..], [{}, { p("a"), q("a") }]);
     }
 
     #[test]
     fn asp_5_20() {
-        let rules = [rule![p(a)], rule![{q(X)} if p(X)]];
+        let rules = minuet![p("a"); {q(x)} if p(x)];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{ p(a), q(a) }, { p(a) }]);
+        assert_answers!(answers[..], [{ p("a"), q("a") }, { p("a") }]);
     }
 
     #[test]
     fn asp_5_21() {
-        let rules = [rule![0 {p(1..2, 1..2)} 2]];
+        let rules = minuet![0 {p(1..2, 1..2)} 2];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [
@@ -844,7 +862,7 @@ mod test {
 
     #[test]
     fn asp_5_22() {
-        let rules = [rule![2 {p(1..2, 1..2)} 2]];
+        let rules = minuet![2 {p(1..2, 1..2)} 2];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [
@@ -860,40 +878,40 @@ mod test {
     #[test]
     fn asp_5_23() {
         // Example program (5.43).
-        let rules = [
-            rule![letter(a)],
-            rule![letter(b)],
-            rule![1 {p(X, 1..2)} 1 if letter(X)],
-        ];
+        let rules = minuet! {
+            letter("a");
+            letter("b");
+            1 {p(x, 1..2)} 1 if letter(x);
+        };
 
         let xcc = XccCompiler::new(rules.clone(), Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [
-            {letter(a), letter(b), p(a, 1), p(b, 1)},
-            {letter(a), letter(b), p(a, 1), p(b, 2)},
-            {letter(a), letter(b), p(a, 2), p(b, 2)},
-            {letter(a), letter(b), p(a, 2), p(b, 1)},
+            {letter("a"), letter("b"), p("a", 1), p("b", 1)},
+            {letter("a"), letter("b"), p("a", 1), p("b", 2)},
+            {letter("a"), letter("b"), p("a", 2), p("b", 2)},
+            {letter("a"), letter("b"), p("a", 2), p("b", 1)},
         ]);
 
         // Exercise 5.23.
-        let ext_rules = rules.into_iter().chain([rule![{ p(c, 1) }]]);
+        let ext_rules = rules.into_iter().chain(minuet![{ p("c", 1) }]);
         let xcc = XccCompiler::new(ext_rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [
-            {letter(a), letter(b), p(a, 1), p(b, 1)},
-            {letter(a), letter(b), p(a, 1), p(b, 1), p(c, 1)},
-            {letter(a), letter(b), p(a, 1), p(b, 2), p(c, 1)},
-            {letter(a), letter(b), p(a, 1), p(b, 2)},
-            {letter(a), letter(b), p(a, 2), p(b, 2)},
-            {letter(a), letter(b), p(a, 2), p(b, 2), p(c, 1)},
-            {letter(a), letter(b), p(a, 2), p(b, 1), p(c, 1)},
-            {letter(a), letter(b), p(a, 2), p(b, 1)},
+            {letter("a"), letter("b"), p("a", 1), p("b", 1)},
+            {letter("a"), letter("b"), p("a", 1), p("b", 1), p("c", 1)},
+            {letter("a"), letter("b"), p("a", 1), p("b", 2), p("c", 1)},
+            {letter("a"), letter("b"), p("a", 1), p("b", 2)},
+            {letter("a"), letter("b"), p("a", 2), p("b", 2)},
+            {letter("a"), letter("b"), p("a", 2), p("b", 2), p("c", 1)},
+            {letter("a"), letter("b"), p("a", 2), p("b", 1), p("c", 1)},
+            {letter("a"), letter("b"), p("a", 2), p("b", 1)},
         ]);
     }
 
     #[test]
     fn asp_5_35() {
-        let rules = [rule![p if not q], rule![q if not r], rule![r if not p]];
+        let rules = minuet![p() if not q(); q() if not r(); r() if not p()];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], []);
@@ -901,16 +919,16 @@ mod test {
 
     #[test]
     fn alviano_dodaro_example_1() {
-        let rules = [rule![a or b or c], rule![b if a], rule![c if not a]];
+        let rules = minuet![a() or b() or c(); b() if a(); c() if not a()];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_answers!(answers[..], [{ c }]);
+        assert_answers!(answers[..], [{ c() }]);
     }
 
     /// Gelfond & Lifschitz, program (5).
     #[test]
     fn gelfond_lifschitz_5() {
-        let rules = [rule![p(1, 2)], rule![q(X) if p(X, Y) and not q(Y)]];
+        let rules = minuet![p(1, 2); q(x) if p(x, y) and not q(y)];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{ p(1, 2), q(1) }]);
@@ -919,11 +937,7 @@ mod test {
     /// Gelfond & Lifschitz, program (5), remark 3.
     #[test]
     fn gelfond_lifschitz_5_3() {
-        let rules = [
-            rule![p(1, 2)],
-            rule![p(2, 1)],
-            rule![q(X) if p(X, Y) and not q(Y)],
-        ];
+        let rules = minuet![p(1, 2); p(2, 1); q(x) if p(x, y) and not q(y)];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [
@@ -935,11 +949,11 @@ mod test {
     /// Gelfond & Lifschitz, program (6).
     #[test]
     fn gelfond_lifschitz_6() {
-        let rules = [
-            rule![p if q and not r],
-            rule![q if r and not p],
-            rule![r if p and not q],
-        ];
+        let rules = minuet! {
+            p() if q() and not r();
+            q() if r() and not p();
+            r() if p() and not q();
+        };
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{}]);
@@ -948,17 +962,17 @@ mod test {
     /// https://potassco.org/doc/start/
     #[test]
     fn potassco_start() {
-        let rules = [
-            rule![innocent(Suspect) if motive(Suspect) and not guilty(Suspect)],
-            rule![motive(harry)],
-            rule![motive(sally)],
-            rule![guilty(harry)],
-        ];
+        let rules = minuet! {
+            innocent(suspect) if motive(suspect) and not guilty(suspect);
+            motive("Harry");
+            motive("Sally");
+            guilty("Harry");
+        };
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(
             answers[..],
-            [{motive(harry), motive(sally), guilty(harry), innocent(sally)}]
+            [{motive("Harry"), motive("Sally"), guilty("Harry"), innocent("Sally")}]
         );
     }
 }

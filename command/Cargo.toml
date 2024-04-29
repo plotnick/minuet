@@ -8,5 +8,7 @@ name = "minuet"
 path = "minuet.rs"
 
 [dependencies]
+anyhow.workspace = true
 minuet-semantics = { path = "../semantics" }
+minuet-syntax = { path = "../syntax" }
 minuet-tracer = { path = "../tracer" }

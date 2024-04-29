@@ -1,6 +1,11 @@
 [workspace]
-members = ["command", "semantics", "solver", "syntax", "tracer"]
+members = ["command", "macro", "semantics", "solver", "syntax", "tracer"]
 resolver = "2"
 
 [workspace.dependencies]
+anyhow = "1.0"
 gray-codes = "0.1"
+nom = "7.1"
+proc-macro2 = "1.0"
+quote = "1.0"
+thiserror = "1.0"

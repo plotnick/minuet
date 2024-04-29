@@ -10,12 +10,12 @@ use minuet_syntax::*;
 use crate::clause::*;
 use crate::ground::*;
 
-/// An interpretation is a set of atoms interpreted as true;
-/// any atom not contained in the set is interpreted as false.
+/// An interpretation is a set of ground atoms interpreted as true.
+/// Any atom not contained in the set is interpreted as false.
 pub type Interpretation = BTreeSet<Atom<GroundTerm>>;
 
 /// If a formula `f` is satisfied by interpretation `i`, e.g.,
-/// if `f.eval(i) => true`, the interpretation is called
+/// if `f.eval(i) => true`, then the interpretation is called
 /// a _model_ of `f`. A model that is _minimal_ or _stable_
 /// is also called an _answer set_.
 pub type Model = Interpretation;
@@ -204,21 +204,25 @@ mod test {
 
     #[test]
     fn eval_atom() {
-        assert_eq!(gatom![a].eval(&interp![]), false);
-        assert_eq!(gatom![a].eval(&interp![gatom![a]]), true);
-        assert_eq!(gatom![a].eval(&interp![gatom![b]]), false);
-        assert_eq!(gatom![a].eval(&interp![gatom![a], gatom![b]]), true);
+        assert_eq!(atom!(a).eval(&interp![]), false);
+        assert_eq!(atom!(a).eval(&interp![atom!(a)]), true);
+        assert_eq!(atom!(a).eval(&interp![atom!(b)]), false);
+        assert_eq!(atom!(a).eval(&interp![atom!(a), atom!(b)]), true);
     }
 
     #[test]
     fn eval_literal() {
-        assert_eq!(glit![a].eval(&interp![]), false);
-        assert_eq!(glit![not a].eval(&interp![]), true);
-        assert_eq!(glit![a].eval(&interp![gatom![a]]), true);
-        assert_eq!(glit![not a].eval(&interp![gatom![a], gatom![b]]), false);
-        assert_eq!(glit![a].eval(&interp![gatom![b]]), false);
-        assert_eq!(glit![not a].eval(&interp![gatom![b]]), true);
-        assert_eq!(glit![a].eval(&interp![gatom![a], gatom![b]]), true);
-        assert_eq!(glit![not a].eval(&interp![gatom![a], gatom![b]]), false);
+        assert_eq!(pos!(a).eval(&interp![]), false);
+        assert_eq!(neg!(a).eval(&interp![]), true);
+        assert_eq!(nneg!(a).eval(&interp![]), false);
+        assert_eq!(pos!(a).eval(&interp![atom!(a)]), true);
+        assert_eq!(neg!(a).eval(&interp![atom!(a)]), false);
+        assert_eq!(nneg!(a).eval(&interp![atom!(a)]), true);
+        assert_eq!(pos!(a).eval(&interp![atom!(b)]), false);
+        assert_eq!(neg!(a).eval(&interp![atom!(b)]), true);
+        assert_eq!(nneg!(a).eval(&interp![atom!(b)]), false);
+        assert_eq!(pos!(a).eval(&interp![atom!(a), atom!(b)]), true);
+        assert_eq!(neg!(a).eval(&interp![atom!(a), atom!(b)]), false);
+        assert_eq!(nneg!(a).eval(&interp![atom!(a), atom!(b)]), true);
     }
 }

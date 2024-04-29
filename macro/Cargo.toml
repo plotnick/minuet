@@ -1,0 +1,15 @@
+[package]
+name = "minuet-macro"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+path = "macro.rs"
+proc-macro = true
+
+[dependencies]
+anyhow.workspace = true
+minuet-syntax = { path = "../syntax", features = ["macros", "to-rust"] }
+nom.workspace = true
+proc-macro2.workspace = true
+quote.workspace = true

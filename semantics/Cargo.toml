@@ -8,6 +8,7 @@ path = "semantics.rs"
 
 [dependencies]
 gray-codes.workspace = true
+minuet-macro = { path = "../macro" }
 minuet-solver = { path = "../solver" }
-minuet-syntax = { path = "../syntax" }
+minuet-syntax = { path = "../syntax", features = ["macros"] }
 minuet-tracer = { path = "../tracer" }

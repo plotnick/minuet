@@ -9,4 +9,4 @@ path = "solver.rs"
 [dependencies]
 gray-codes.workspace = true
 minuet-tracer = { path = "../tracer" }
-thiserror = "1.0"
+thiserror.workspace = true

@@ -26,6 +26,10 @@ impl<R> Program<R> {
         Self(rules.into_iter().collect())
     }
 
+    pub fn as_slice(&self) -> &[R] {
+        self.0.as_slice()
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = &R> {
         self.0.iter()
     }
@@ -503,102 +507,69 @@ mod test {
     use super::*;
 
     macro_rules! nrule {
-        [if $(($($body:tt)*))and+] => {
+        ([$($head: expr),*], [$($body: expr),*]) => {
             NormalRule::new(
-                Disjunction::f(),
-                Conjunction::from_iter([$(glit![$($body)*]),+])
-            )
-        };
-        [$head:ident($($args:tt)*) if $(($($body:tt)*))and*] => {
-            NormalRule::new(
-                Disjunction::from_iter(gatom![$head($($args)*)]),
-                Conjunction::from_iter([$(glit![$body]),*])
-            )
-        };
-        [$(($($head:tt)*))or*] => {
-            NormalRule::new(
-                Disjunction::from_iter([$(glit![$($head)*]),*]),
-                Conjunction::from_iter([])
-            )
-        };
-        [$(($($head:tt)*))or* if $(($($body:tt)*))and*] => {
-            NormalRule::new(
-                Disjunction::from_iter([$(glit![$($head)*]),*]),
-                Conjunction::from_iter([$(glit![$($body)*]),*])
+                Disjunction::from_iter([$($head),*]),
+                Conjunction::from_iter([$($body),*])
             )
         };
     }
 
     macro_rules! srule {
-        [if $(($($body:tt)*))and+] => {
+        ([], [$($body: expr),*]) => {
             ShiftedRule::new(
                 None,
-                Conjunction::from_iter([$(glit![$($body)*]),+])
+                Conjunction::from_iter([$($body),*])
             )
         };
-        [$head:ident($($args:tt)*) if $(($($body:tt)*))and*] => {
+        ($head: tt, [$($body: expr),*]) => {
             ShiftedRule::new(
-                Some(gatom![$head($($args)*)]),
-                Conjunction::from_iter([$(glit![$($body)*]),*])
-            )
-        };
-        [$head:ident if $(($($body:tt)*))and*] => {
-            ShiftedRule::new(
-                Some(gatom![$head]),
-                Conjunction::from_iter([$(glit![$($body)*]),*])
+                Some(atom!($head)),
+                Conjunction::from_iter([$($body),*])
             )
         };
     }
 
     macro_rules! crule {
-        [iff $(($(($($conj:tt)*))and*))or*] => {
+        ([], [$([$($conj: expr),*]),*]) => {
             CompleteRule::new(
                 None,
-                Disjunction::from_iter([$(Conjunction::from_iter([$(glit![$($conj)*]),*])),*])
+                Disjunction::from_iter([$(Conjunction::from_iter([$($conj),*])),*])
             )
         };
-        [$head:ident($($args:tt)*) iff $(($(($($conj:tt)*))and*))or*] => {
+        ($pred: ident $(($($args: tt)*))?, [$([$($conj: expr),*]),*]) => {
             CompleteRule::new(
-                Some(gatom![$head($($args)*)]),
-                Disjunction::from_iter([$(Conjunction::from_iter([$(glit![$($conj)*]),*])),*])
-            )
-        };
-        [$head:ident iff $(($(($($conj:tt)*))and*))or*] => {
-            CompleteRule::new(
-                Some(gatom![$head]),
-                Disjunction::from_iter([$(Conjunction::from_iter([$(glit![$($conj)*]),*])),*])
+                Some(atom!($pred$(($($args)*))?)),
+                Disjunction::from_iter([$(Conjunction::from_iter([$($conj),*])),*])
             )
         };
     }
 
     macro_rules! interp {
-        {$($head:ident$(($($arg:tt),*))?),*} => {
-            [$(gatom![$head$(($($arg),*))?]),*]
-                .into_iter()
-                .collect::<Interpretation>()
+        ({$($x: tt),* $(,)?}) => {
+            [$(atom!($x)),*].into_iter().collect::<Interpretation>()
         }
     }
 
     /// This program is already ground.
     #[test]
     fn ground_trivial_0() {
-        let ground = Program::new([rule![a or b or c]]).ground();
+        let rules = [rule!([pos!(a), pos!(b), pos!(c)])];
         assert_eq!(
-            ground.iter().cloned().collect::<Vec<_>>(),
-            vec![rule![a or b or c].ground()]
+            Program::new(rules.clone()).ground().as_slice(),
+            [rule!([pos!(a), pos!(b), pos!(c)]).ground()]
         );
     }
 
     /// This program needs a bit of grounding.
     #[test]
     fn ground_trivial_1() {
-        let rules = [rule![p(X) if p(a) and p(b)]];
-        let ground = Program::new(rules).ground();
+        let rules = [rule!([pos!(p(var!(x)))], [pos!(p(1)), pos!(p(2))])];
         assert_eq!(
-            ground.iter().cloned().collect::<Vec<_>>(),
+            Program::new(rules).ground().as_slice(),
             [
-                rule![p(a) if p(a) and p(b)].ground(),
-                rule![p(b) if p(a) and p(b)].ground()
+                rule!([pos!(p(1))], [pos!(p(1)), pos!(p(2))]).ground(),
+                rule!([pos!(p(2))], [pos!(p(1)), pos!(p(2))]).ground(),
             ]
         );
     }
@@ -606,128 +577,159 @@ mod test {
     /// And this one needs a bit more.
     #[test]
     fn ground_gelfond_lifschitz_5() {
-        let rules = [rule![p(1, 2)], rule![q(X) if p(X, Y) and not q(Y)]];
-        let ground = Program::new(rules).ground();
+        let rules = [
+            rule!([pos!(p(1, 2))]),
+            rule!(
+                [pos!(q(var!(x)))],
+                [pos!(p(var!(x), var!(y))), neg!(q(var!(y)))]
+            ),
+        ];
         assert_eq!(
-            ground.into_iter().collect::<Vec<_>>(),
-            vec![
-                rule![p(1, 2)].ground(),
-                rule![q(1) if p(1, 1) and not q(1)].ground(),
-                rule![q(1) if p(1, 2) and not q(2)].ground(),
-                rule![q(2) if p(2, 1) and not q(1)].ground(),
-                rule![q(2) if p(2, 2) and not q(2)].ground(),
+            Program::new(rules).ground().as_slice(),
+            [
+                rule!([pos!(p(1, 2))]).ground(),
+                rule!([pos!(q(1))], [pos!(p(1, 1)), neg!(q(1))]).ground(),
+                rule!([pos!(q(1))], [pos!(p(1, 2)), neg!(q(2))]).ground(),
+                rule!([pos!(q(2))], [pos!(p(2, 1)), neg!(q(1))]).ground(),
+                rule!([pos!(q(2))], [pos!(p(2, 2)), neg!(q(2))]).ground(),
             ]
         );
     }
 
     #[test]
     fn normalize_constraint() {
-        let mut images = rule![if p and q].ground().image();
+        let mut images = rule!([], [pos!(p), pos!(q)]).ground().image();
         assert_eq!(images.len(), 1);
-        assert_eq!(images.remove(0).normalize(), [nrule![if (p) and (q)]]);
+        assert_eq!(
+            images.remove(0).normalize(),
+            [nrule!([], [pos!(p), pos!(q)])]
+        );
     }
 
     #[test]
     fn normalize_choice() {
-        let mut images = rule![{ p }].ground().image();
+        let mut images = rule![{ pos!(p) }].ground().image();
         assert_eq!(images.len(), 1);
-        assert_eq!(images.remove(0).normalize(), [nrule![(p) or (not p)]]);
+        assert_eq!(
+            images.remove(0).normalize(),
+            [nrule!([pos!(p), neg!(p)], [])]
+        );
     }
 
     #[test]
     fn normalize_choices() {
-        let mut images = rule![{p or q or r}].ground().image();
+        let mut images = rule![{pos!(p), pos!(q), pos!(r)}].ground().image();
         assert_eq!(images.len(), 3);
-        assert_eq!(images.remove(2).normalize(), [nrule![(r) or (not r)]]);
-        assert_eq!(images.remove(1).normalize(), [nrule![(q) or (not q)]]);
-        assert_eq!(images.remove(0).normalize(), [nrule![(p) or (not p)]]);
+        assert_eq!(
+            images.remove(2).normalize(),
+            [nrule!([pos!(r), neg!(r)], [])]
+        );
+        assert_eq!(
+            images.remove(1).normalize(),
+            [nrule!([pos!(q), neg!(q)], [])]
+        );
+        assert_eq!(
+            images.remove(0).normalize(),
+            [nrule!([pos!(p), neg!(p)], [])]
+        );
     }
 
     #[test]
     fn shift_disjunctive_rule() {
-        let n = nrule![(a) or (b) or (c) if (d) and (e)];
+        let n = nrule!([pos!(a), pos!(b), pos!(c)], [pos!(d), pos!(e)]);
         assert_eq!(
             n.shift(),
             [
-                srule![a if (d) and (e) and (not b) and (not c)],
-                srule![b if (d) and (e) and (not a) and (not c)],
-                srule![c if (d) and (e) and (not a) and (not b)]
+                srule!(a, [pos!(d), pos!(e), neg!(b), neg!(c)]),
+                srule!(b, [pos!(d), pos!(e), neg!(a), neg!(c)]),
+                srule!(c, [pos!(d), pos!(e), neg!(a), neg!(b)]),
             ]
         );
     }
 
     #[test]
     fn shift_head_negation() {
-        assert_eq!(nrule![(not q)].shift(), vec![srule![if (not not q)]]);
+        assert_eq!(nrule!([neg!(q)], []).shift(), [srule!([], [nneg!(q)])]);
         assert_eq!(
-            nrule![(p) or (not q)].shift(),
-            vec![srule![p if (not not q)]]
+            nrule!([pos!(p), neg!(q)], []).shift(),
+            [srule!(p, [nneg!(q)])]
         );
     }
 
     #[test]
     fn shift_double_head_negation() {
-        assert_eq!(nrule![(not not q)].shift(), vec![srule![if (not q)]]);
+        assert_eq!(nrule!([nneg!(q)], []).shift(), [srule!([], [neg!(q)])]);
         assert_eq!(
-            nrule![(p) or (not not q)].shift(),
-            vec![srule![p if (not q)]]
+            nrule!([pos!(p), nneg!(q)], []).shift(),
+            [srule!(p, [neg!(q)])]
         );
     }
 
     #[test]
     fn complete_trivial_0() {
-        let rules = [rule![p]];
+        let rules = [rule!([pos!(p)])];
         let complete = Program::new(rules).preprocess(Trace::none());
-        assert_eq!(complete.into_iter().collect::<Vec<_>>(), [crule![p iff ()]]);
+        assert_eq!(complete.into_iter().collect::<Vec<_>>(), [crule!(p, [[]])]);
     }
 
     #[test]
     fn complete_trivial_1() {
-        let rules = [rule![a if b]];
+        let rules = [rule!([pos!(a)], [pos!(b)])];
         let complete = Program::new(rules).preprocess(Trace::none());
         assert_eq!(
             complete.into_iter().collect::<Vec<_>>(),
-            [crule![a iff ((b))]]
+            [crule![a, [[pos!(b)]]]]
         );
     }
 
     #[test]
     fn complete_constraint() {
-        let rules = [rule![if p and q]];
+        let rules = [rule!([], [pos!(p), pos!(q)])];
         let complete = Program::new(rules).preprocess(Trace::none());
         assert_eq!(
             complete.into_iter().collect::<Vec<_>>(),
-            [crule![iff ((p) and (q))]]
+            [crule!([], [[pos!(p), pos!(q)]])]
         );
     }
 
     /// Dodaro, example 10.
     #[test]
     fn complete_dodaro_example_10() {
-        let rules = [rule![a or b], rule![c or d if a]];
+        let rules = [
+            rule!([pos!(a), pos!(b)]),
+            rule!([pos!(c), pos!(d)], [pos!(a)]),
+        ];
         let complete = Program::new(rules).preprocess(Trace::none());
         assert_eq!(
             complete.into_iter().collect::<Vec<_>>(),
             [
-                crule![a iff ((not b))],
-                crule![b iff ((not a))],
-                crule![c iff ((a) and (not d))],
-                crule![d iff ((a) and (not c))],
+                crule!(a, [[neg!(b)]]),
+                crule!(b, [[neg!(a)]]),
+                crule!(c, [[pos!(a), neg!(d)]]),
+                crule!(d, [[pos!(a), neg!(c)]]),
             ]
         );
     }
 
     /// Alviano and Dodaro, "Completion of Disjunctive Logic Programs" (IJCAI-16).
+    fn alviano_dodaro_example_1() -> Vec<BaseRule<Term>> {
+        vec![
+            rule!([pos!(a), pos!(b), pos!(c)]),
+            rule!([pos!(b)], [pos!(a)]),
+            rule!([pos!(c)], [neg!(a)]),
+        ]
+    }
+
     #[test]
     fn complete_alviano_dodaro_example_1() {
-        let rules = [rule![a or b or c], rule![b if a], rule![c if not a]];
+        let rules = alviano_dodaro_example_1();
         let complete = Program::new(rules).preprocess(Trace::none());
         assert_eq!(
             complete.into_iter().collect::<Vec<_>>(),
             [
-                crule![a iff ((not b) and (not c))],
-                crule![b iff ((not a) and (not c)) or ((a))],
-                crule![c iff ((not a) and (not b)) or ((not a))],
+                crule!(a, [[neg!(b), neg!(c)]]),
+                crule!(b, [[neg!(a), neg!(c)], [pos!(a)]]),
+                crule!(c, [[neg!(a), neg!(b)], [neg!(a)]]),
             ]
         );
     }
@@ -736,42 +738,47 @@ mod test {
     #[test]
     fn reduce_asp_5_2() {
         // Rules (5.1)-(5.4).
-        let rules = [rule![p], rule![q], rule![r if p and not s], rule![s if q]];
+        let rules = [
+            rule!([pos!(p)]),
+            rule!([pos!(q)]),
+            rule!([pos!(r)], [pos!(p), neg!(s)]),
+            rule!([pos!(s)], [pos!(q)]),
+        ];
         let complete = Program::new(rules).preprocess(Trace::none());
         assert_eq!(
             complete.iter().cloned().collect::<Vec<_>>(),
             [
-                crule![p iff ()],
-                crule![q iff ()],
-                crule![r iff ((p) and (not s))],
-                crule![s iff ((q))],
+                crule!(p, [[]]),
+                crule!(q, [[]]),
+                crule!(r, [[pos!(p), neg!(s)]]),
+                crule!(s, [[pos!(q)]]),
             ]
         );
 
         // Reduct (5.10).
-        let interp = interp! {p, q, s};
+        let interp = interp!({p, q, s});
         let reduct = complete.clone().reduce(&interp);
         assert_eq!(
             reduct.into_iter().collect::<Vec<_>>(),
             [
-                crule![p iff ()],
-                crule![q iff ()],
-                crule![r iff],
-                crule![s iff ((q))],
+                crule!(p, [[]]),
+                crule!(q, [[]]),
+                crule!(r, []),
+                crule!(s, [[pos!(q)]]),
             ]
         );
         assert!(complete.eval(&interp));
 
         // Reduct (5.11).
-        let interp = interp! {p, q};
+        let interp = interp!({p, q});
         let reduct = complete.clone().reduce(&interp);
         assert_eq!(
             reduct.iter().cloned().collect::<Vec<_>>(),
             [
-                crule![p iff ()],
-                crule![q iff ()],
-                crule![r iff ((p))],
-                crule![s iff ((q))],
+                crule!(p, [[]]),
+                crule!(q, [[]]),
+                crule!(r, [[pos!(p)]]),
+                crule!(s, [[pos!(q)]]),
             ]
         );
         assert!(!reduct.eval(&interp));
@@ -779,41 +786,46 @@ mod test {
 
     #[test]
     fn reduce_alviano_dodaro_example_1() {
-        let rules = [rule![a or b or c], rule![b if a], rule![c if not a]];
+        let rules = alviano_dodaro_example_1();
         let program = Program::new(rules).preprocess(Trace::none());
-        let interp = interp! {c};
+        let interp = interp!({ c });
         let reduct = program.clone().reduce(&interp);
         assert_eq!(
             reduct.into_iter().collect::<Vec<_>>(),
-            [crule![a iff], crule![b iff ((a))], crule![c iff () or ()],]
+            [crule!(a, []), crule!(b, [[pos!(a)]]), crule!(c, [[], []]),]
         );
         assert!(program.eval(&interp));
     }
 
+    /// P ∨ ¬P
+    fn excluded_middle() -> Vec<BaseRule<Term>> {
+        vec![rule!([pos!(p), neg!(p)])]
+    }
+
     #[test]
     fn complete_excluded_middle() {
-        let rules = [rule![p or not p]];
+        let rules = excluded_middle();
         let complete = Program::new(rules).preprocess(Trace::none());
         assert_eq!(
             complete.into_iter().collect::<Vec<_>>(),
-            [crule![p iff ((not not p))]]
+            [crule!(p, [[nneg!(p)]])]
         );
     }
 
     /// Lifschitz, "ASP" §5.4.
     #[test]
     fn reduce_excluded_middle() {
-        let rules = [rule![p or not p]];
+        let rules = excluded_middle();
         let complete = Program::new(rules).preprocess(Trace::none());
 
-        let interp = interp! {};
+        let interp = interp!({});
         let reduct = complete.clone().reduce(&interp);
         assert!(reduct.eval(&interp));
-        assert_eq!(reduct.into_iter().collect::<Vec<_>>(), [crule![p iff]]);
+        assert_eq!(reduct.into_iter().collect::<Vec<_>>(), [crule!(p, [])]);
 
-        let interp = interp! {p};
+        let interp = interp!({ p });
         let reduct = complete.clone().reduce(&interp);
         assert!(reduct.eval(&interp));
-        assert_eq!(reduct.into_iter().collect::<Vec<_>>(), [crule![p iff ()]]);
+        assert_eq!(reduct.into_iter().collect::<Vec<_>>(), [crule!(p, [[]])]);
     }
 }

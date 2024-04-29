@@ -5,3 +5,15 @@ edition = "2021"
 
 [lib]
 path = "syntax.rs"
+
+[dependencies]
+nom.workspace = true
+proc-macro2.workspace = true
+proc-macro2.optional = true
+quote.workspace = true
+quote.optional = true
+
+[features]
+default = ["macros"]
+macros = []
+to-rust = ["quote", "proc-macro2"]

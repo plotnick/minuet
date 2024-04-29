@@ -5,9 +5,21 @@
 //! macro parser may layer whatever surface syntax it likes
 //! on top of these elements.
 
+mod asp_core2;
+mod lexer;
+mod minuet1;
+mod parser;
+mod tokens;
+
 use std::collections::BTreeSet;
 use std::fmt;
 use std::ops;
+
+pub use asp_core2::{AspCore2Lexer, AspCore2Parser, AspCore2Token};
+pub use lexer::{Lex, Token};
+pub use minuet1::{Minuet1Lexer, Minuet1Parser, Minuet1Token};
+pub use parser::Parse;
+pub use tokens::Tokens;
 
 /// Uninterpreted element that names itself, a predicate, or a variable.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -173,6 +185,7 @@ impl ops::Not for Constant {
 /// Arithmetic operations represented by direct methods
 /// instead of `std::ops` traits.
 impl Constant {
+    /// Absolute value.
     pub fn abs(self) -> Option<Self> {
         use Constant::*;
         if let Number(x) = self {
@@ -182,11 +195,12 @@ impl Constant {
         }
     }
 
-    pub fn pow(self, rhs: Self) -> Option<Self> {
+    /// Exponentiation.
+    pub fn pow(self, exponent: Self) -> Option<Self> {
         use Constant::*;
-        if let (Number(x), Number(y)) = (self, rhs) {
-            if let Ok(y) = u32::try_from(y) {
-                return Some(Number(x.pow(y)));
+        if let (Number(base), Number(exponent)) = (self, exponent) {
+            if let Ok(exponent) = u32::try_from(exponent) {
+                return Some(Number(base.pow(exponent)));
             }
         }
         None
@@ -287,12 +301,31 @@ impl fmt::Display for RelOp {
 }
 
 /// Unary (prefix) operations: absolute value, numeric negation,
-/// and logical (i.e., classical, strong) negation.
+/// and logical (a.k.a., classical, strong) negation.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum UnaryOp {
     Abs,
     Neg,
     Not,
+}
+
+/// [Pratt style](https://en.wikipedia.org/wiki/Operator-precedence_parser#Pratt_parsing).
+/// precedence parsing.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+enum Precedence {
+    Lowest,
+    Interval,
+    Subtraction,
+    Addition,
+    Division,
+    Multiplication,
+    Exponentiation,
+}
+
+impl Precedence {
+    fn is_right_assoc(&self) -> bool {
+        matches!(self, Precedence::Exponentiation)
+    }
 }
 
 /// Binary (infix) arithmetic operations: addition, subtraction,
@@ -343,7 +376,7 @@ impl fmt::Display for BinOp {
 pub enum Term {
     Constant(Constant),
     Variable(Symbol),
-    Choice(Pool<Term>),
+    Pool(Pool<Term>),
     UnaryOperation(UnaryOp, Box<Term>),
     BinaryOperation(Box<Term>, BinOp, Box<Term>),
 }
@@ -360,9 +393,15 @@ impl Term {
     }
 }
 
-impl From<Constant> for Term {
-    fn from(c: Constant) -> Self {
-        Self::Constant(c)
+impl<T: Into<Constant>> From<T> for Term {
+    fn from(t: T) -> Self {
+        Self::Constant(t.into())
+    }
+}
+
+impl From<Pool<Term>> for Term {
+    fn from(p: Pool<Term>) -> Self {
+        Self::Pool(p)
     }
 }
 
@@ -373,11 +412,11 @@ impl fmt::Display for Term {
         match self {
             Constant(x) => x.fmt(f),
             Variable(x) => x.fmt(f),
-            Choice(x) => x.fmt(f),
+            Pool(x) => x.fmt(f),
             UnaryOperation(Abs, x) => f.write_fmt(format_args!("|{x}|")),
             UnaryOperation(Neg, x) => f.write_fmt(format_args!("-{x}")),
             UnaryOperation(Not, x) => f.write_fmt(format_args!("~{x}")),
-            BinaryOperation(x, op, y) => f.write_fmt(format_args!("{x} {op} {y}")),
+            BinaryOperation(x, op, y) => f.write_fmt(format_args!("({x} {op} {y})")),
         }
     }
 }
@@ -709,540 +748,297 @@ where
     }
 }
 
-#[macro_export]
-macro_rules! sym {
-    [$s:ident] => {
-        Symbol::new(String::from(stringify!($s)))
-    };
-}
+/// Render Minuet syntax as Rust tokens.
+/// See the `minuet!` proc macro parser.
+#[cfg(feature = "to-rust")]
+mod to_rust {
+    use proc_macro2::TokenStream;
+    use quote::{quote, ToTokens};
 
-#[macro_export]
-macro_rules! constant {
-    [($($c:tt)*)] => { constant![$($c)*] };
-    [$s:ident] => { Constant::Name(sym![$s]) };
-    [$i:literal] => { Constant::Number($i) };
-    [-$i:literal] => { Constant::Number(-$i) };
-}
-
-#[macro_export]
-macro_rules! term {
-    [($($term:tt)*)] => { term![$($term)*] };
-    [|($($term:tt)*)|] => { Term::unary_operation(UnaryOp::Abs, term![$($term)*]) };
-    [|$a:tt|] => { Term::unary_operation(UnaryOp::Abs, term![$a]) };
-    [-$a:literal] => { Term::Constant(Constant::Number(-$a)) };
-    [-$a:tt] => { Term::unary_operation(UnaryOp::Neg, term![$a]) };
-    [~$a:tt] => { Term::unary_operation(UnaryOp::Not, term![$a]) };
-    [$a:tt + $b:tt] => { Term::binary_operation(term![$a], BinOp::Add, term![$b]) };
-    [$a:tt - $b:tt] => { Term::binary_operation(term![$a], BinOp::Sub, term![$b]) };
-    [$a:tt * $b:tt] => { Term::binary_operation(term![$a], BinOp::Mul, term![$b]) };
-    [$a:tt ^ $b:tt] => { Term::binary_operation(term![$a], BinOp::Exp, term![$b]) };
-    [$a:tt / $b:tt] => { Term::binary_operation(term![$a], BinOp::Div, term![$b]) };
-    [$a:tt % $b:tt] => { Term::binary_operation(term![$a], BinOp::Rem, term![$b]) };
-    [$a:tt $(or $b:tt)+] => { Term::Choice(Pool::set([term![$a], $(term![$b]),+])) };
-    [$i:tt..$j:tt] => { Term::Choice(Pool::interval(term![$i], term![$j])) };
-    [$a:literal] => { Term::Constant(Constant::Number($a)) };
-    [$s:ident] => {
-        // Prolog/ASP surface syntax: names of constants start with a lowercase
-        // letter, and the names of variables start with an uppercase letter or
-        // underscore.
-        if stringify!($s).chars().take(1).all(char::is_lowercase) {
-            Term::Constant(constant![$s])
-        } else {
-            Term::Variable(sym![$s])
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! atom {
-    // We need a little tt-muncher to delimit arguments.
-    // This may be problematic as the term syntax grows.
-    [@args [] [] -> [$($args:tt)*]] => {{
-        let mut v = vec![$($args)*]; v.reverse(); v
-    }};
-    [@args [] [$($partial:tt)*] -> [$($args:tt)*]] => {
-        atom![@args [] [] -> [term![$($partial)*], $($args)*]]
-    };
-    [@args [, $($rest:tt)*] [] -> [$($args:tt)*]] => {
-        atom![@args [$($rest)*] [] -> [$($args)*]]
-    };
-    [@args [, $($rest:tt)*] [$($partial:tt)+] -> [$($args:tt)*]] => {
-        atom![@args [$($rest)*] [] -> [term![$($partial)+], $($args)*]]
-    };
-    [@args [.. $j:literal $($rest:tt)*] [$i:literal $($partial:tt)*] -> [$($args:tt)*]] => {
-        atom![@args [$($rest)*] [$($partial)*] -> [term![$i..$j], $($args)*]]
-    };
-    [@args [($($term:tt)*) $($rest:tt)*] [$($partial:tt)*] -> [$($args:tt)*]] => {
-        atom![@args [$($rest)*] [$($partial)*] -> [term![($($term)*)], $($args)*]]
-    };
-    [@args [$pred:ident $($rest:tt)*] [$($partial:tt)*] -> [$($args:tt)*]] => {
-        atom![@args [$($rest)*] [$pred $($partial)*] -> [$($args)*]]
-    };
-    [@args [$i:literal $($rest:tt)*] [$($partial:tt)*] -> [$($args:tt)*]] => {
-        atom![@args [$($rest)*] [$i $($partial)*] -> [$($args)*]]
-    };
-
-    // And another to delimit disjuncts in choice rules.
-    // It would be nice if this could share code with lit!
-    [@agg [] [] -> [$($agg:tt)*]] => {{
-        let mut v = vec![$($agg)*]; v.reverse(); v
-    }};
-    [@agg [] [$($partial:tt)*] -> [$($agg:tt)*]] => {
-        atom![@agg [] [] -> [Literal::Positive(atom![$($partial)*]), $($agg)*]]
-    };
-    [@agg [not not $($rest:tt)*] [] -> [$($agg:tt)*]] => {
-        atom![@agg [$($rest)*] [not not] -> [$($agg)*]]
-    };
-    [@agg [not $($rest:tt)*] [] -> [$($agg:tt)*]] => {
-        atom![@agg [$($rest)*] [not] -> [$($agg)*]]
-    };
-    [@agg [or $($rest:tt)*] [] -> [$($agg:tt)*]] => {
-        atom![@agg [$($rest)*] [] -> [$($agg)*]]
-    };
-    [@agg [or $($rest:tt)*] [not not $($partial:tt)*] -> [$($agg:tt)*]] => {
-        atom![@agg [$($rest)*] [] -> [Literal::DoubleNegative(atom![$($partial)*]), $($agg)*]]
-    };
-    [@agg [or $($rest:tt)*] [not $($partial:tt)*] -> [$($agg:tt)*]] => {
-        atom![@agg [$($rest)*] [] -> [Literal::Negative(atom![$($partial)*]), $($agg)*]]
-    };
-    [@agg [or $($rest:tt)*] [$($partial:tt)*] -> [$($agg:tt)*]] => {
-        atom![@agg [$($rest)*] [] -> [Literal::Positive(atom![$($partial)*]), $($agg)*]]
-    };
-    [@agg [$pred:ident($($args:tt)*) $($rest:tt)*] [not not] -> [$($agg:tt)*]] => {
-        atom![@agg [$($rest)*] [] -> [Literal::DoubleNegative(atom![$pred($($args)*)]), $($agg)*]]
-    };
-    [@agg [$pred:ident $($rest:tt)*] [not not] -> [$($agg:tt)*]] => {
-        atom![@agg [$($rest)*] [not not $pred] -> [$($agg)*]]
-    };
-    [@agg [$pred:ident($($args:tt)*) $($rest:tt)*] [not] -> [$($agg:tt)*]] => {
-        atom![@agg [$($rest)*] [not $pred($($args)*)] -> [$($agg)*]]
-    };
-    [@agg [$pred:ident $($rest:tt)*] [not] -> [$($agg:tt)*]] => {
-        atom![@agg [$($rest)*] [not $pred] -> [$($agg)*]]
-    };
-    [@agg [$pred:ident($($args:tt)*) $($rest:tt)*] [] -> [$($agg:tt)*]] => {
-        atom![@agg [$($rest)*] [$pred($($args)*)] -> [$($agg)*]]
-    };
-    [@agg [$pred:ident $($rest:tt)*] [] -> [$($agg:tt)*]] => {
-        atom![@agg [$($rest)*] [$pred] -> [$($agg)*]]
-    };
-
-    // Lparse-style cardinality bounds.
-    // TODO: combinations, arbitrary comparisons.
-    [$lb:literal {$($agg:tt)*} $ub:literal] => {
-        Atom::<Term>::agg(
-            atom![@agg [$($agg)*] [] -> []],
-            Some(AggregateBounds::new(term![$lb], term![$ub]))
-        )
-    };
-    [{$($agg:tt)*}] => { Atom::<Term>::agg(atom![@agg [$($agg)*] [] -> []], None) };
-    [$pred:ident($($args:tt)*)] => { Atom::<Term>::app(sym![$pred], atom![@args [$($args)*] [] -> []]) };
-    [$pred:ident] => { Atom::<Term>::app(sym![$pred], vec![]) };
-}
-
-#[macro_export]
-macro_rules! lit {
-    [($($lit:tt)*)] => { lit![$($lit)*] };
-    [{$($atom:tt)*}] => { Literal::Positive(atom![{$($atom)*}]) };
-    [$x:tt = $y:tt] => { Literal::relation(term![$x], RelOp::Eq, term![$y]) };
-    [$x:tt != $y:tt] => { Literal::relation(term![$x], RelOp::Ne, term![$y]) };
-    [$x:tt < $y:tt] => { Literal::relation(term![$x], RelOp::Lt, term![$y]) };
-    [$x:tt > $y:tt] => { Literal::relation(term![$x], RelOp::Gt, term![$y]) };
-    [$x:tt <= $y:tt] => { Literal::relation(term![$x], RelOp::Leq, term![$y]) };
-    [$x:tt >= $y:tt] => { Literal::relation(term![$x], RelOp::Geq, term![$y]) };
-    [not not $pred:ident($($arg:tt)*)] => { Literal::DoubleNegative(atom![$pred($($arg)*)]) };
-    [not not $pred:ident] => { Literal::DoubleNegative(atom![$pred]) };
-    [not $pred:ident($($arg:tt)*)] => { Literal::Negative(atom![$pred($($arg)*)]) };
-    [not $pred:ident] => { Literal::Negative(atom![$pred]) };
-    [$pred:ident($($arg:tt)*)] => { Literal::Positive(atom![$pred($($arg)*)]) };
-    [$pred:ident] => { Literal::Positive(atom![$pred]) };
-}
-
-/// An auxiliary macro with "internal" tt-munching rules of the form:
-/// `[@internal [unprocessed] -> [accumulator] [carry]] => { ... }`.
-/// We need the auxiliary so we don't infinitely recurse matching `[$($rest)*]`.
-#[macro_export]
-macro_rules! rule_aux {
-    // Common literal muncher: $next will be @head or @body.
-    [@lit @$next:ident [($($lit:tt)*) $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-        rule_aux![@$next [$($rest)*] -> [lit![($($lit)*)], $($acc)*] [$($carry)*]]
-    };
-    [@lit @$next:ident [$x:tt = $y:tt $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-        rule_aux![@$next [$($rest)*] -> [lit![$x = $y], $($acc)*] [$($carry)*]]
-    };
-    [@lit @$next:ident [$x:tt != $y:tt $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-        rule_aux![@$next [$($rest)*] -> [lit![$x != $y], $($acc)*] [$($carry)*]]
-    };
-    [@lit @$next:ident [$x:tt < $y:tt $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-        rule_aux![@$next [$($rest)*] -> [lit![$x < $y], $($acc)*] [$($carry)*]]
-    };
-    [@lit @$next:ident [$x:tt > $y:tt $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-        rule_aux![@$next [$($rest)*] -> [lit![$x > $y], $($acc)*] [$($carry)*]]
-    };
-    [@lit @$next:ident [$x:tt <= $y:tt $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-        rule_aux![@$next [$($rest)*] -> [lit![$x <= $y], $($acc)*] [$($carry)*]]
-    };
-    [@lit @$next:ident [$x:tt >= $y:tt $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-        rule_aux![@$next [$($rest)*] -> [lit![$x >= $y], $($acc)*] [$($carry)*]]
-    };
-    [@lit @$next:ident [not not $pred:ident($($args:tt)*) $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-        rule_aux![@$next [$($rest)*] -> [lit![not not $pred($($args)*)], $($acc)*] [$($carry)*]]
-    };
-    [@lit @$next:ident [not not $pred:ident $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-        rule_aux![@$next [$($rest)*] -> [lit![not not $pred], $($acc)*] [$($carry)*]]
-    };
-    [@lit @$next:ident [not $pred:ident($($args:tt)*) $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-        rule_aux![@$next [$($rest)*] -> [lit![not $pred($($args)*)], $($acc)*] [$($carry)*]]
-    };
-    [@lit @$next:ident [not $pred:ident $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-        rule_aux![@$next [$($rest)*] -> [lit![not $pred], $($acc)*] [$($carry)*]]
-    };
-    [@lit @$next:ident [$pred:ident($($args:tt)*) $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-        rule_aux![@$next [$($rest)*] -> [lit![$pred($($args)*)], $($acc)*] [$($carry)*]]
-    };
-    [@lit @$next:ident [$pred:ident $($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-        rule_aux![@$next [$($rest)*] -> [lit![$pred], $($acc)*] [$($carry)*]]
-    };
-    [@lit @$next:ident [$($rest:tt)*] -> [$($acc:tt)*] [$($carry:tt)*]] => {
-        rule_aux![@$next [$($rest)*] -> [$($acc)*] [$($carry)*]]
-    };
-
-    // Head base cases: no more tokens in the head, punt to the body muncher.
-    [@head [] -> [$($head:tt)*] []] => {
-        rule_aux![@body [] -> [] [$($head)*]]
-    };
-    [@head [if $($body:tt)*] -> [$($head:tt)*] []] => {
-        rule_aux![@body [$($body)*] -> [] [$($head)*]]
-    };
-
-    // Accumulate disjunction of head literals.
-    [@head [and $($rest:tt)*] -> [$($head:tt)*] []] => {
-        compile_error!("only disjunctions allowed in rule heads")
-    };
-    [@head [or $($rest:tt)*] -> [$($head:tt)*] []] => {
-        rule_aux![@lit @head [$($rest)*] -> [$($head)*] []]
-    };
-    [@head [$($rest:tt)*] -> [$($head:tt)*] []] => {
-        rule_aux![@lit @head [$($rest)*] -> [$($head)*] []]
-    };
-
-    // Choice rules have a single aggregate atom as head, and may
-    // include bounds. To dodge the combinatorics, we accept only
-    // no bounds, or both bounds.
-    [@choice [$lb:literal {$($choice:tt)*} $ub:literal  if $($body:tt)*] -> [] []] => {
-        rule_aux![@body [$($body)*] -> [] [$lb {$($choice)*} $ub]]
-    };
-    [@choice [$lb:literal {$($choice:tt)*} $ub:literal] -> [] []] => {
-        rule_aux![@body [] -> [] [$lb {$($choice)*} $ub]]
-    };
-    [@choice [{$($choice:tt)*} if $($body:tt)*] -> [] []] => {
-        rule_aux![@body [$($body)*] -> [] [{$($choice)*}]]
-    };
-    [@choice [{$($choice:tt)*}] -> [] []] => {
-        rule_aux![@body [] -> [] [{$($choice)*}]]
-    };
-
-    // Choice rule body base cases.
-    [@body [] -> [$($body:tt)*] [$lb:literal {$($choice:tt)*} $ub:literal]] => {{
-        let head = match atom![$lb {$($choice)*} $ub] {
-            Atom::Agg(agg) => agg,
-            _ => unimplemented!("invalid bounded choice rule"),
-        };
-        let mut body = vec![$($body)*]; body.reverse();
-        BaseRule::Choice(ChoiceRule::new(head, body))
-    }};
-    [@body [] -> [$($body:tt)*] [{$($choice:tt)*}]] => {{
-        let head = match atom![{$($choice)*}] {
-            Atom::Agg(agg) => agg,
-            _ => unimplemented!("invalid choice rule"),
-        };
-        let mut body = vec![$($body)*]; body.reverse();
-        BaseRule::Choice(ChoiceRule::new(head, body))
-    }};
-
-    // Disjunctive rule body base case.
-    [@body [] -> [$($body:tt)*] [$($head:tt)*]] => {{
-        let mut head = vec![$($head)*]; head.reverse();
-        let mut body = vec![$($body)*]; body.reverse();
-        BaseRule::Disjunctive(Rule::new(head, body))
-    }};
-
-    // Accumulate conjunction of body literals and carry the head.
-    [@body [and $($rest:tt)*] -> [$($body:tt)*] [$($head:tt)*]] => {
-        rule_aux![@lit @body [$($rest)*] -> [$($body)*] [$($head)*]]
-    };
-    [@body [or $($rest:tt)*] -> [$($body:tt)*] [$($head:tt)*]] => {
-        compile_error!("only conjunctions allowed in rule bodies")
-    };
-    [@body [if $($rest:tt)*] -> [$($body:tt)*] [$($head:tt)*]] => {
-        compile_error!("only one body allowed per rule")
-    };
-    [@body [$($rest:tt)*] -> [$($body:tt)*] [$($head:tt)*]] => {
-        rule_aux![@lit @body [$($rest)*] -> [$($body)*] [$($head)*]]
-    };
-}
-
-#[macro_export]
-macro_rules! rule {
-    // Top level: punt to auxiliary macro.
-    [$lb:literal {$($choice:tt)*} $ub:literal if $($body:tt)*] => {
-        rule_aux![@choice [$lb {$($choice)*} $ub if $($body)*] -> [] []]
-    };
-    [$lb:literal {$($choice:tt)*} $ub:literal] => {
-        rule_aux![@choice [$lb {$($choice)*} $ub] -> [] []]
-    };
-    [{$($choice:tt)*} if $($body:tt)*] => {
-        rule_aux![@choice [{$($choice)*} if $($body)*] -> [] []]
-    };
-    [{$($choice:tt)*}] => {
-        rule_aux![@choice [{$($choice)*}] -> [] []]
-    };
-    [if $($body:tt)*] => {
-        rule_aux![@body [$($body)*] -> [] []]
-    };
-    [$($rest:tt)*] => {
-        rule_aux![@head [$($rest)*] -> [] []]
-    };
-}
-
-// Ground variants.
-#[macro_export]
-macro_rules! gatom {
-    [$($x:tt)*] => { atom![$($x)*].ground() };
-}
-
-#[macro_export]
-macro_rules! glit {
-    [$($lit:tt)*] => { lit![$($lit)*].ground() };
-}
-
-#[cfg(test)]
-#[macro_use]
-pub mod test {
     use super::*;
 
-    #[test]
-    fn symbol() {
-        assert_eq!(sym![a], Symbol::new(String::from("a")));
-        assert_eq!(sym![a], sym![a]);
-        assert_ne!(sym![a], sym![b]);
+    impl ToTokens for Symbol {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            let name = self.name();
+            tokens.extend(quote!(::minuet_syntax::Symbol::from(#name)));
+        }
     }
 
-    #[test]
-    fn constant() {
-        assert_eq!(constant![a], Constant::Name(sym![a]));
-        assert_eq!(constant![0], Constant::Number(0));
-        assert_eq!(constant![a], "a".into());
-        assert_eq!(constant![0], 0.into());
-        assert_eq!(constant![-1], (-1).into());
-        assert_ne!(constant![-1], 1.into());
+    impl ToTokens for Constant {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            tokens.extend(match self {
+                Constant::Name(n) => quote!(::minuet_syntax::Constant::Name(#n)),
+                Constant::Number(i) => quote!(::minuet_syntax::Constant::Number(#i)),
+            });
+        }
     }
 
-    #[test]
-    fn term() {
-        assert_eq!(
-            term![a],
-            Term::Constant(Constant::Name(Symbol::new(String::from("a"))))
-        );
-        assert_eq!(term![X], Term::Variable(Symbol::new(String::from("X"))));
-        assert_eq!(term![1], Term::Constant(Constant::Number(1)));
-        assert_eq!(term![-1], Term::Constant(Constant::Number(-1)));
-        assert_eq!(term![-X], Term::unary_operation(UnaryOp::Neg, term![X]));
-        assert_eq!(
-            term![|(-3)|],
-            Term::unary_operation(UnaryOp::Abs, term![-3])
-        );
-        assert_eq!(
-            term![1..3],
-            Term::Choice(Pool::interval(term![1], term![3]))
-        );
-        assert_eq!(
-            term![1..N],
-            Term::Choice(Pool::interval(term![1], term![N]))
-        );
-        assert_eq!(
-            term![1 or 2 or 3],
-            Term::Choice(Pool::set([term![1], term![2], term![3]]))
-        );
-        assert_eq!(
-            term![1 + 2],
-            Term::binary_operation(term![1], BinOp::Add, term![2])
-        );
+    impl ToTokens for Pool<Term> {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            tokens.extend(match self {
+                Pool::Interval(l, u) => quote!(::minuet_syntax::Pool::interval(#l, #u)),
+                Pool::Set(s) => quote!(::minuet_syntax::Pool::set([#(#s),*])),
+            });
+        }
     }
 
-    #[test]
-    fn atom() {
-        assert_eq!(atom![f], Atom::<Term>::app(sym![f], vec![]));
-        assert_eq!(atom![f()], Atom::<Term>::app(sym![f], vec![]));
-        assert_eq!(atom![f(a)], Atom::<Term>::app(sym![f], vec![term![a]]));
-        assert_eq!(
-            atom![f(a, b)],
-            Atom::<Term>::app(sym![f], vec![term![a], term![b]])
-        );
-        assert_eq!(
-            atom![f(a or b)],
-            Atom::<Term>::app(sym![f], vec![term![a or b]])
-        );
-        assert_eq!(
-            atom![f(0 or 1)],
-            Atom::<Term>::app(sym![f], vec![term![0 or 1]])
-        );
-        assert_eq!(
-            atom![f(a or b, 0 or 1)],
-            Atom::<Term>::app(sym![f], vec![term![a or b], term![0 or 1]])
-        );
-        assert_eq!(
-            atom![f(0..1)],
-            Atom::<Term>::app(sym![f], vec![term![0..1]])
-        );
-        assert_eq!(
-            atom![f(X, Y)],
-            Atom::<Term>::app(sym![f], vec![term![X], term![Y]])
-        );
-        assert_eq!(
-            atom![{ p }],
-            Atom::<Term>::agg([Literal::Positive(atom![p])], None),
-        );
-        assert_eq!(
-            atom![10 {p or q} 100],
-            Atom::<Term>::agg(
-                [Literal::Positive(atom![p]), Literal::Positive(atom![q])],
-                Some(AggregateBounds::new(term![10], term![100]))
-            ),
-        );
-        assert_eq!(
-            atom![{f(a) or f(b)}],
-            Atom::<Term>::agg(
-                [
-                    Literal::Positive(atom![f(a)]),
-                    Literal::Positive(atom![f(b)])
-                ],
-                None
-            ),
-        );
-        assert_eq!(
-            atom![{f(a) or not f(b) or not not f(c)}],
-            Atom::<Term>::agg(
-                [
-                    Literal::Positive(atom![f(a)]),
-                    Literal::Negative(atom![f(b)]),
-                    Literal::DoubleNegative(atom![f(c)])
-                ],
-                None
-            ),
-        );
+    impl ToTokens for RelOp {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            tokens.extend(match self {
+                RelOp::Eq => quote!(::minuet_syntax::RelOp::Eq),
+                RelOp::Ne => quote!(::minuet_syntax::RelOp::Ne),
+                RelOp::Lt => quote!(::minuet_syntax::RelOp::Lt),
+                RelOp::Gt => quote!(::minuet_syntax::RelOp::Gt),
+                RelOp::Leq => quote!(::minuet_syntax::RelOp::Leq),
+                RelOp::Geq => quote!(::minuet_syntax::RelOp::Geq),
+            });
+        }
     }
 
-    #[test]
-    fn literal() {
-        use Literal::*;
-        assert_eq!(lit![p], Positive::<Term>(atom![p]));
-        assert_eq!(lit![p(a, b)], Positive::<Term>(atom![p(a, b)]));
-        assert_eq!(lit![not p(a, b)], Negative::<Term>(atom![p(a, b)]));
-        assert_eq!(
-            lit![not not p(a, b)],
-            DoubleNegative::<Term>(atom![p(a, b)])
-        );
+    impl ToTokens for UnaryOp {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            tokens.extend(match self {
+                UnaryOp::Abs => quote!(::minuet_syntax::UnaryOp::Abs),
+                UnaryOp::Neg => quote!(::minuet_syntax::UnaryOp::Neg),
+                UnaryOp::Not => quote!(::minuet_syntax::UnaryOp::Not),
+            });
+        }
     }
 
-    #[test]
-    fn relation() {
-        use RelOp::*;
-        let rel = Literal::relation;
-        assert_eq!(lit![0 = 1], rel(term![0], Eq, term![1]));
-        assert_eq!(lit![0 < 1], rel(term![0], Lt, term![1]));
-        assert_eq!(lit![0 > 1], rel(term![0], Gt, term![1]));
-        assert_eq!(lit![0 <= 1], rel(term![0], Leq, term![1]));
-        assert_eq!(lit![0 >= 1], rel(term![0], Geq, term![1]));
+    impl ToTokens for BinOp {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            tokens.extend(match self {
+                BinOp::Add => quote!(::minuet_syntax::BinOp::Add),
+                BinOp::Sub => quote!(::minuet_syntax::BinOp::Sub),
+                BinOp::Mul => quote!(::minuet_syntax::BinOp::Mul),
+                BinOp::Exp => quote!(::minuet_syntax::BinOp::Exp),
+                BinOp::Div => quote!(::minuet_syntax::BinOp::Div),
+                BinOp::Rem => quote!(::minuet_syntax::BinOp::Rem),
+            });
+        }
     }
 
-    #[test]
-    fn rule() {
-        // Heads with no bodies are (disjunctive) "facts".
-        assert_eq!(
-            rule![p],
-            BaseRule::Disjunctive(Rule::<Term>::new([lit![p]], []))
-        );
-        assert_eq!(
-            rule![p(a)],
-            BaseRule::Disjunctive(Rule::new([lit![p(a)]], []))
-        );
-        assert_eq!(
-            rule![p(a or b)],
-            BaseRule::Disjunctive(Rule::new([lit![p(a or b)]], []))
-        );
-        assert_eq!(
-            rule![p(a) or p(b)],
-            BaseRule::Disjunctive(Rule::new([lit![p(a)], lit![p(b)]], []))
-        );
-        assert_eq!(
-            rule![0 = 1],
-            BaseRule::Disjunctive(Rule::new([lit![0 = 1]], []))
-        );
-        assert_eq!(
-            rule![0 != (0 + 1)],
-            BaseRule::Disjunctive(Rule::new([lit![0 != (0 + 1)]], []))
-        );
-        assert_eq!(
-            rule![0 < 1],
-            BaseRule::Disjunctive(Rule::new([lit![0 < 1]], []))
-        );
-        assert_eq!(
-            rule![0 >= 1 if 1 < 0],
-            BaseRule::Disjunctive(Rule::new([lit![0 >= 1]], [lit![1 < 0]]))
-        );
+    impl ToTokens for Term {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            tokens.extend(match self {
+                Term::Constant(c) => quote!(::minuet_syntax::Term::Constant(#c)),
+                Term::Variable(v) => quote!(::minuet_syntax::Term::Variable(#v)),
+                Term::Pool(p) => quote!(::minuet_syntax::Term::Pool(#p)),
+                Term::UnaryOperation(op, t) => {
+                    quote!(::minuet_syntax::Term::unary_operation(#op, #t))
+                }
+                Term::BinaryOperation(l, op, r) => {
+                    quote!(::minuet_syntax::Term::binary_operation(#l, #op, #r))
+                }
+            })
+        }
+    }
 
-        // Look, Ma, negations in the head! Why, it's the excluded middle!
-        assert_eq!(
-            rule![p or not p],
-            BaseRule::Disjunctive(Rule::<Term>::new([lit![p], lit![not p]], []))
-        );
+    impl ToTokens for Application<Term> {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            let predicate = &self.predicate;
+            let arguments = &self.arguments;
+            tokens.extend(quote!(::minuet_syntax::Application::new(#predicate, [#(#arguments),*])));
+        }
+    }
 
-        // Choice rules may be viewed as syntactic sugar for such negations.
-        assert_eq!(
-            rule![{ p }],
-            BaseRule::Choice(ChoiceRule::new(
-                Aggregate {
-                    choices: vec![lit![p]],
-                    bounds: None,
-                },
-                []
-            ))
-        );
+    impl ToTokens for Atom<Term> {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            tokens.extend(match self {
+                Atom::Aux(_) => unimplemented!("auxiliary"),
+                Atom::Agg(agg) => todo!("aggregate {agg:?}"),
+                Atom::App(app) => quote!(Atom::App(#app)),
+            })
+        }
+    }
 
-        // Bodies without heads are (conjunctive) "constraints".
-        assert_eq!(
-            rule![if q(a)],
-            BaseRule::Disjunctive(Rule::new([], [lit![q(a)]]))
-        );
-        assert_eq!(
-            rule![if q(a) and q(b) and q(c)],
-            BaseRule::Disjunctive(Rule::new([], [lit![q(a)], lit![q(b)], lit![q(c)]]))
-        );
+    impl ToTokens for AggregateBounds<Term> {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            let lb = &self.lower_bound;
+            let ub = &self.upper_bound;
+            tokens.extend(quote!(::minuet_syntax::AggregateBounds::new(#lb, #ub)));
+        }
+    }
 
-        // Rules generally have a (disjunctive) head and a (conjunctive) body.
-        assert_eq!(
-            rule![p if q],
-            BaseRule::Disjunctive(Rule::<Term>::new([lit![p]], [lit![q]]))
-        );
-        assert_eq!(
-            rule![p(a) or p(b) or p(c) if q(a) and q(b) and q(c)],
-            BaseRule::Disjunctive(Rule::new(
-                [lit![p(a)], lit![p(b)], lit![p(c)]],
-                [lit![q(a)], lit![q(b)], lit![q(c)]]
-            ))
-        );
-        assert_eq!(
-            rule![p(a, b) if q(a) and not q(b)],
-            BaseRule::Disjunctive(Rule::new([lit![p(a, b)]], [lit![q(a)], lit![not q(b)]]))
-        );
-        assert_eq!(
-            rule![p(a, b) if not q(a) and q(b)],
-            BaseRule::Disjunctive(Rule::new([lit![p(a, b)]], [lit![not q(a)], lit![q(b)]]))
-        );
-        assert_eq!(
-            rule![0 < 1 if 0 > 1],
-            BaseRule::Disjunctive(Rule::new([lit![0 < 1]], [lit![0 > 1]]))
-        );
+    impl ToTokens for Aggregate<Term> {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            let choices = &self.choices;
+            tokens.extend(if let Some(bounds) = &self.bounds {
+                quote!(::minuet_syntax::Aggregate::new([#(#choices),*], Some(#bounds)))
+            } else {
+                quote!(::minuet_syntax::Aggregate::new([#(#choices),*], None))
+            });
+        }
+    }
+
+    impl ToTokens for Literal<Term> {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            tokens.extend(match self {
+                Literal::Positive(atom) => {
+                    quote!(::minuet_syntax::Literal::Positive(#atom))
+                }
+                Literal::Negative(atom) => {
+                    quote!(::minuet_syntax::Literal::Negative(#atom))
+                }
+                Literal::DoubleNegative(atom) => {
+                    quote!(::minuet_syntax::Literal::DoubleNegative(#atom))
+                }
+                Literal::Relation(left, op, right) => {
+                    quote!(::minuet_syntax::Literal::relation(#left, #op, #right))
+                }
+            });
+        }
+    }
+
+    impl ToTokens for Rule<Term> {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            let head = &self.head;
+            let body = &self.body;
+            tokens.extend(quote!(::minuet_syntax::Rule::new([#(#head),*], [#(#body),*])));
+        }
+    }
+
+    impl ToTokens for ChoiceRule<Term> {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            let head = &self.head;
+            let body = &self.body;
+            tokens.extend(quote!(::minuet_syntax::ChoiceRule::new(#head, [#(#body),*])));
+        }
+    }
+
+    impl ToTokens for BaseRule<Term> {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            tokens.extend(match self {
+                BaseRule::Choice(rule) => {
+                    quote!(::minuet_syntax::BaseRule::Choice(#rule))
+                }
+                BaseRule::Disjunctive(rule) => {
+                    quote!(::minuet_syntax::BaseRule::Disjunctive(#rule))
+                }
+            })
+        }
+    }
+}
+
+/// These constructor macros can make tests involving syntactic elements
+/// (most of them) much more readable. They are *not* intended as a public
+/// interface, and *should* be behind `#[cfg(test)]`, but [cargo can't
+/// currently export test code across crates](https://github.com/rust-lang/cargo/issues/8379).
+#[cfg(feature = "macros")]
+mod macros {
+    #[macro_export]
+    macro_rules! sym {
+        ($name: ident) => {
+            Symbol::from(stringify!($name))
+        };
+    }
+
+    #[macro_export]
+    macro_rules! atom {
+        ({$($lit: expr),*}) => {
+            Atom::Agg(Aggregate::new([$($lit),*], None))
+        };
+        ($pred: ident) => {
+            Atom::App(Application::new(sym!($pred), []))
+        };
+        ($pred: ident($($arg: expr),*)) => {
+            Atom::App(Application::new(sym!($pred), [$($arg.into()),*]))
+        };
+    }
+
+    #[macro_export]
+    macro_rules! pos {
+        ($pred: ident $(($($args: tt)*))?) => {
+            Literal::Positive(atom!($pred$(($($args)*))?))
+        };
+        ($lit: expr) => {
+            Literal::Positive($lit)
+        };
+    }
+
+    #[macro_export]
+    macro_rules! neg {
+        ($pred: ident $(($($args: tt)*))?) => {
+            Literal::Negative(atom!($pred$(($($args)*))?))
+        };
+        ($lit: expr) => {
+            Literal::Negative($lit)
+        };
+    }
+
+    #[macro_export]
+    macro_rules! nneg {
+        ($pred: ident $(($($args: tt)*))?) => {
+            Literal::DoubleNegative(atom!($pred$(($($args)*))?))
+        };
+        ($lit: expr) => {
+            Literal::DoubleNegative($lit)
+        };
+    }
+
+    #[macro_export]
+    macro_rules! rel {
+        ($l: expr, $op: ident, $r: expr) => {
+            Literal::relation($l.into(), RelOp::$op, $r.into())
+        };
+    }
+
+    #[macro_export]
+    macro_rules! constant {
+        ($c: literal) => {
+            Term::Constant($c.into())
+        };
+    }
+    #[macro_export]
+    macro_rules! var {
+        ($name: ident) => {
+            Term::Variable(sym!($name))
+        };
+    }
+
+    #[macro_export]
+    macro_rules! pool {
+        ({$($elt: expr),*}) => {
+            Pool::set([$($elt.into()),*])
+        };
+        ($start: literal .. $end: literal) => {
+            Pool::interval(constant!($start), constant!($end))
+        };
+        ($start: expr => $end: expr) => {
+            Pool::interval($start, $end)
+        };
+    }
+
+    #[macro_export]
+    macro_rules! unary {
+        ($op: ident, $e: expr) => {
+            Term::unary_operation(UnaryOp::$op, $e.into())
+        };
+    }
+
+    #[macro_export]
+    macro_rules! binary {
+        ($l: expr, $op: ident, $r: expr) => {
+            Term::binary_operation($l.into(), BinOp::$op, $r.into())
+        };
+    }
+
+    #[macro_export]
+    macro_rules! rule {
+        ({$($choice: expr),* $(,)?}) => {{
+            let agg = Aggregate::new([$($choice),*], None);
+            BaseRule::<Term>::Choice(ChoiceRule::new(agg, []))
+        }};
+        ($lb: literal {$($choice: expr),* $(,)?} $ub: literal) => {{
+            let bnd = AggregateBounds::new($lb.into(), $ub.into());
+            let agg = Aggregate::new([$($choice),*], Some(bnd));
+            BaseRule::<Term>::Choice(ChoiceRule::new(agg, []))
+        }};
+        ([$($head: expr),* $(,)?]) => {
+            BaseRule::<Term>::Disjunctive(Rule::new([$($head),*], []))
+        };
+        ([$($head: expr),* $(,)?], [$($body: expr),* $(,)?]) => {
+            BaseRule::<Term>::Disjunctive(Rule::new([$($head),*], [$($body),*]))
+        };
     }
 }

@@ -1,5 +1,5 @@
 //! Compositional clauses: formulas containing conjunctions & disjunctions.
-//! Used to represent propositional images; see Lifschitz, "ASP" §§ 4.6-7.
+//! Used to represent propositional images; see Lifschitz, "ASP" §§4.6-7.
 //! The normalization routines were adapted from [Stuart Russel's beautiful
 //! Common Lisp code](https://people.eecs.berkeley.edu/~russell/code/logic/algorithms/normal.lisp).
 //!
@@ -259,7 +259,7 @@ impl Clause {
     }
 }
 
-/// Helper for C/DNF conversion.
+/// Helper for [CD]NF conversion.
 fn merge_arguments<F, G, X, Y>(mut args: Vec<F>) -> F
 where
     F: IntoIterator<Item = X> + FromIterator<G> + Clone,
@@ -326,13 +326,13 @@ mod test {
             Clause::or([clause![$a], $(clause![$b]),+])
         };
         [not not $lit:tt] => {
-            Clause::Lit(glit![not not $lit])
+            Clause::Lit(nneg!(atom!($lit)).ground())
         };
         [not $lit:tt] => {
-            Clause::Lit(glit![not $lit])
+            Clause::Lit(neg!(atom!($lit)).ground())
         };
         [$lit:tt] => {
-            Clause::Lit(glit![$lit])
+            Clause::Lit(pos!(atom!($lit)).ground())
         };
     }
 
@@ -374,56 +374,56 @@ mod test {
         assert_eq!(c0.cnf(), Cnf::t());
         assert_eq!(
             c1.cnf(),
-            Cnf::from_iter([Disjunction::from_iter([glit![p]])])
+            Cnf::from_iter([Disjunction::from_iter([pos!(p)])])
         );
         assert_eq!(
             c2.cnf(),
             Cnf::from_iter([
-                Disjunction::from_iter([glit![p]]),
-                Disjunction::from_iter([glit![q]])
+                Disjunction::from_iter([pos!(p)]),
+                Disjunction::from_iter([pos!(q)])
             ])
         );
         assert_eq!(
             c3.cnf(),
-            Cnf::from_iter([Disjunction::from_iter([glit![p], glit![q]])])
+            Cnf::from_iter([Disjunction::from_iter([pos!(p), pos!(q)])])
         );
         assert_eq!(
             c4.cnf(),
             Cnf::from_iter([
-                Disjunction::from_iter([glit![p]]),
-                Disjunction::from_iter([glit![q], glit![r]]),
+                Disjunction::from_iter([pos!(p)]),
+                Disjunction::from_iter([pos!(q), pos!(r)]),
             ])
         );
         assert_eq!(
             c5.cnf(),
             Cnf::from_iter([
-                Disjunction::from_iter([glit![p], glit![q]]),
-                Disjunction::from_iter([glit![p], glit![r]]),
+                Disjunction::from_iter([pos!(p), pos!(q)]),
+                Disjunction::from_iter([pos!(p), pos!(r)]),
             ])
         );
         assert_eq!(
             c6.cnf(),
             Cnf::from_iter([
-                Disjunction::from_iter([glit![not p], glit![q]]),
-                Disjunction::from_iter([glit![not p], glit![r], glit![not s]])
+                Disjunction::from_iter([neg!(p), pos!(q)]),
+                Disjunction::from_iter([neg!(p), pos!(r), neg!(s)])
             ])
         );
         assert_eq!(
             c7.cnf(),
             Cnf::from_iter([
-                Disjunction::from_iter([glit![q], glit![not q]]),
-                Disjunction::from_iter([glit![r], glit![not q]]),
-                Disjunction::from_iter([glit![q], glit![a], glit![b]]),
-                Disjunction::from_iter([glit![r], glit![a], glit![b]]),
+                Disjunction::from_iter([pos!(q), neg!(q)]),
+                Disjunction::from_iter([pos!(r), neg!(q)]),
+                Disjunction::from_iter([pos!(q), pos!(a), pos!(b)]),
+                Disjunction::from_iter([pos!(r), pos!(a), pos!(b)]),
             ])
         );
         assert_eq!(
             c8.cnf(),
             Cnf::from_iter([
-                Disjunction::from_iter([glit![a], glit![b]]),
-                Disjunction::from_iter([glit![c], glit![d]]),
-                Disjunction::from_iter([glit![e], glit![f]]),
-                Disjunction::from_iter([glit![g], glit![h]]),
+                Disjunction::from_iter([pos!(a), pos!(b)]),
+                Disjunction::from_iter([pos!(c), pos!(d)]),
+                Disjunction::from_iter([pos!(e), pos!(f)]),
+                Disjunction::from_iter([pos!(g), pos!(h)]),
             ])
         );
     }
@@ -434,68 +434,68 @@ mod test {
         assert_eq!(c0.dnf(), Dnf::from_iter([Conjunction::t()]));
         assert_eq!(
             c1.dnf(),
-            Dnf::from_iter([Conjunction::from_iter([glit![p]])])
+            Dnf::from_iter([Conjunction::from_iter([pos!(p)])])
         );
         assert_eq!(
             c2.dnf(),
-            Dnf::from_iter([Conjunction::from_iter([glit![p], glit![q]])])
+            Dnf::from_iter([Conjunction::from_iter([pos!(p), pos!(q)])])
         );
         assert_eq!(
             c3.dnf(),
             Dnf::from_iter([
-                Conjunction::from_iter([glit![p]]),
-                Conjunction::from_iter([glit![q]])
+                Conjunction::from_iter([pos!(p)]),
+                Conjunction::from_iter([pos!(q)])
             ])
         );
         assert_eq!(
             c4.dnf(),
             Dnf::from_iter([
-                Conjunction::from_iter([glit![p], glit![q]]),
-                Conjunction::from_iter([glit![p], glit![r]]),
+                Conjunction::from_iter([pos!(p), pos!(q)]),
+                Conjunction::from_iter([pos!(p), pos!(r)]),
             ])
         );
         assert_eq!(
             c5.dnf(),
             Dnf::from_iter([
-                Conjunction::from_iter([glit![p]]),
-                Conjunction::from_iter([glit![q], glit![r]]),
+                Conjunction::from_iter([pos!(p)]),
+                Conjunction::from_iter([pos!(q), pos!(r)]),
             ])
         );
         assert_eq!(
             c6.dnf(),
             Dnf::from_iter([
-                Conjunction::from_iter([glit![not p]]),
-                Conjunction::from_iter([glit![q], glit![r]]),
-                Conjunction::from_iter([glit![q], glit![not s]]),
+                Conjunction::from_iter([neg!(p)]),
+                Conjunction::from_iter([pos!(q), pos!(r)]),
+                Conjunction::from_iter([pos!(q), neg!(s)]),
             ])
         );
         assert_eq!(
             c7.dnf(),
             Dnf::from_iter([
-                Conjunction::from_iter([glit![q], glit![r]]),
-                Conjunction::from_iter([glit![not q], glit![a]]),
-                Conjunction::from_iter([glit![not q], glit![b]]),
+                Conjunction::from_iter([pos!(q), pos!(r)]),
+                Conjunction::from_iter([neg!(q), pos!(a)]),
+                Conjunction::from_iter([neg!(q), pos!(b)]),
             ])
         );
         assert_eq!(
             c8.dnf(),
             Dnf::from_iter([
-                Conjunction::from_iter([glit![a], glit![c], glit![e], glit![g]]),
-                Conjunction::from_iter([glit![b], glit![c], glit![e], glit![g]]),
-                Conjunction::from_iter([glit![a], glit![d], glit![e], glit![g]]),
-                Conjunction::from_iter([glit![b], glit![d], glit![e], glit![g]]),
-                Conjunction::from_iter([glit![a], glit![c], glit![f], glit![g]]),
-                Conjunction::from_iter([glit![b], glit![c], glit![f], glit![g]]),
-                Conjunction::from_iter([glit![a], glit![d], glit![f], glit![g]]),
-                Conjunction::from_iter([glit![b], glit![d], glit![f], glit![g]]),
-                Conjunction::from_iter([glit![a], glit![c], glit![e], glit![h]]),
-                Conjunction::from_iter([glit![b], glit![c], glit![e], glit![h]]),
-                Conjunction::from_iter([glit![a], glit![d], glit![e], glit![h]]),
-                Conjunction::from_iter([glit![b], glit![d], glit![e], glit![h]]),
-                Conjunction::from_iter([glit![a], glit![c], glit![f], glit![h]]),
-                Conjunction::from_iter([glit![b], glit![c], glit![f], glit![h]]),
-                Conjunction::from_iter([glit![a], glit![d], glit![f], glit![h]]),
-                Conjunction::from_iter([glit![b], glit![d], glit![f], glit![h]]),
+                Conjunction::from_iter([pos!(a), pos!(c), pos!(e), pos!(g)]),
+                Conjunction::from_iter([pos!(b), pos!(c), pos!(e), pos!(g)]),
+                Conjunction::from_iter([pos!(a), pos!(d), pos!(e), pos!(g)]),
+                Conjunction::from_iter([pos!(b), pos!(d), pos!(e), pos!(g)]),
+                Conjunction::from_iter([pos!(a), pos!(c), pos!(f), pos!(g)]),
+                Conjunction::from_iter([pos!(b), pos!(c), pos!(f), pos!(g)]),
+                Conjunction::from_iter([pos!(a), pos!(d), pos!(f), pos!(g)]),
+                Conjunction::from_iter([pos!(b), pos!(d), pos!(f), pos!(g)]),
+                Conjunction::from_iter([pos!(a), pos!(c), pos!(e), pos!(h)]),
+                Conjunction::from_iter([pos!(b), pos!(c), pos!(e), pos!(h)]),
+                Conjunction::from_iter([pos!(a), pos!(d), pos!(e), pos!(h)]),
+                Conjunction::from_iter([pos!(b), pos!(d), pos!(e), pos!(h)]),
+                Conjunction::from_iter([pos!(a), pos!(c), pos!(f), pos!(h)]),
+                Conjunction::from_iter([pos!(b), pos!(c), pos!(f), pos!(h)]),
+                Conjunction::from_iter([pos!(a), pos!(d), pos!(f), pos!(h)]),
+                Conjunction::from_iter([pos!(b), pos!(d), pos!(f), pos!(h)]),
             ])
         );
     }
