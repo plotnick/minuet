@@ -6,6 +6,10 @@ pub fn combinations(n: usize, f: impl FnMut(&[usize])) {
 }
 
 pub fn combinations_mixed(n: usize, r: &[usize], mut f: impl FnMut(&[usize])) {
+    if r.iter().any(|&s| s == 0) {
+        return;
+    }
+
     let mut a = vec![0; n + 1];
     let mut m = vec![2];
     m.extend(r);
@@ -106,5 +110,12 @@ mod test {
                 [0, 1, 2],
             ]
         );
+    }
+
+    #[test]
+    fn combinations_3_0_mixed() {
+        let mut combs = vec![];
+        combinations_mixed(3, &[1, 2, 0], |c| combs.push(c.to_vec()));
+        assert_eq!(combs, [] as [[usize; 0]; 0]);
     }
 }

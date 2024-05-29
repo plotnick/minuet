@@ -134,7 +134,7 @@ pub fn all_values<T: Values>(v: Vec<T>) -> Vec<Vec<Constant>> {
             images
                 .iter()
                 .zip(a.iter())
-                .map(|(image, &i)| image[i].clone())
+                .flat_map(|(image, &i)| image.get(i).cloned())
                 .collect::<Vec<Constant>>(),
         );
     });

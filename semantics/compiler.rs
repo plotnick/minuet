@@ -536,6 +536,15 @@ mod test {
     }
 
     #[test]
+    fn no_values() {
+        let rules = minuet![p(2 ^ -1)]; // not an integer
+        let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        // clingo yields `p(0)`, which is questionable.
+        assert_answers!(answers[..], [{}]);
+    }
+
+    #[test]
     fn interval_0() {
         let rules = minuet![q(0..0)];
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
