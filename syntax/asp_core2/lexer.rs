@@ -6,7 +6,7 @@ use crate::lexer::{integer, space, string, symbol, token, Lex, Token};
 use crate::{lex_token, Symbol};
 
 /// Lexical element of an ASP-Core-2 program.
-/// See §5: Lexical Matching Table.
+/// See § 5: Lexical Matching Table.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum AspCore2Token {
     Id(Symbol),

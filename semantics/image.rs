@@ -42,7 +42,7 @@ pub trait PropositionalImage {
 }
 
 impl PropositionalImage for Aggregate<GroundTerm> {
-    /// Lifschitz, "ASP" §5.7.
+    /// Lifschitz, "ASP" § 5.7.
     fn image(self, context: Context) -> Clause {
         let Aggregate { choices, .. } = self;
         context.clause(
@@ -54,13 +54,13 @@ impl PropositionalImage for Aggregate<GroundTerm> {
     }
 }
 
+/// Conjunctive constraints carrying cardinality bounds on an aggregate.
+/// See "ASP" § 5.7, "AG" § 4.7.
 pub trait Bounds {
     fn bounds(self) -> Vec<Conjunction<Clause>>;
 }
 
 impl Bounds for Aggregate<GroundTerm> {
-    /// Conjunctive constraints carrying cardinality bounds on an aggregate.
-    /// See "ASP" §5.7, "AG" §4.7.
     fn bounds(self) -> Vec<Conjunction<Clause>> {
         match self {
             Aggregate {

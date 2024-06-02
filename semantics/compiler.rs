@@ -57,6 +57,9 @@ pub fn format_answer(answer: &AnswerSet) -> String {
     )
 }
 
+/// Preprocess a set of rules, compile it into an XCC problem,
+/// and iterate over the stable models of the program from the
+/// solutions of the problem.
 pub struct XccCompiler {
     program: Program<CompleteRule>,
     solver: DancingCells<Atom<GroundTerm>, bool>,
@@ -678,7 +681,7 @@ mod test {
         ]);
     }
 
-    /// Lifschitz, "ASP", §5.4. Also Aristotle, Shakespeare
+    /// Lifschitz, "ASP", § 5.4. Also Aristotle, Shakespeare
     /// ("to p, or not p; that is the question"), etc.
     #[test]
     fn excluded_middle() {
@@ -704,7 +707,7 @@ mod test {
         assert_answers!(answers[..], []);
     }
 
-    /// Lifschitz, "From Felicitous Models to Answer Set Programming", §3.
+    /// Lifschitz, "From Felicitous Models to Answer Set Programming", § 3.
     #[test]
     fn felicitous_3() {
         let rules = minuet![p(); q() if p(); r() if q() and s()];

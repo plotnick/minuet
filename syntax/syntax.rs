@@ -309,7 +309,7 @@ pub enum UnaryOp {
     Not,
 }
 
-/// [Pratt style](https://en.wikipedia.org/wiki/Operator-precedence_parser#Pratt_parsing).
+/// [Pratt style](https://en.wikipedia.org/wiki/Operator-precedence_parser#Pratt_parsing)
 /// precedence parsing.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 enum Precedence {
@@ -589,7 +589,7 @@ where
 
 /// An atomic formula, its single or double negation as failure,
 /// or a boolean arithmetic relation (e.g., `1 < 2`). See Lifschitz,
-/// "ASP" §5.8 for why triple negation is unnecessary.
+/// "ASP" § 5.8 for why triple negation is unnecessary.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Literal<T> {
     Positive(Atom<T>),

@@ -1,5 +1,5 @@
 //! Operations on sets of constant values.
-//! See "Abstract Gringo" §4.2 and "ASP" §§4.6-7.
+//! See "Abstract Gringo" § 4.2 and "ASP" §§ 4.6-7.
 
 use std::cmp::Ordering;
 use std::collections::btree_set::{self, BTreeSet};

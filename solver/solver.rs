@@ -1,5 +1,5 @@
 //! Exact covering with colors (XCC) using dancing cells
-//! (Knuth §§ 7.2.2.1,3, Christmas Lectures 2018, 2023).
+//! (Knuth §§ 7.2.2.1,3, Christmas Lectures 2018, 2023).
 //!
 //! A finite set of *items* is to be exactly covered by a finite subset of
 //! *options* (not to be confused with Rust's `Option`). *Primary items*
@@ -148,7 +148,7 @@ type OptionItems<T, C> = IdVec<BTreeSet<ItemId<T, C>>, ItemsById<T, C>>;
 type Solution<T, C> = Vec<OptionId<T, C>>;
 type Trail<T, C> = Vec<(usize, usize, Vec<(ItemId<T, C>, usize)>)>;
 
-/// XCC solver à la Knuth §7.2.2.3. The tables here are initialized
+/// XCC solver à la Knuth § 7.2.2.3. The tables here are initialized
 /// once and never changed; all mutable state is relegated to the
 /// `DanceState` structure, and the search procedure is controlled
 /// by the `DanceStep` iterator. But all of the algorithm-specific
@@ -279,7 +279,7 @@ where
 
     /// Solve the XCC problem: search for subsets of the options such that
     /// (i) every primary item occurs exactly once; and (ii) every secondary
-    /// item is assigned at most one color. See Knuth §§7.2.2.1,3.
+    /// item is assigned at most one color. See Knuth §§ 7.2.2.1,3.
     pub fn solve(&self) -> DanceStep<T, C> {
         let n = self.items.len();
         let m = self.options.len();
@@ -734,7 +734,7 @@ mod test {
         const N: u8 = 10;
         const R: usize = 1_000_000;
 
-        // Knuth §7.2.1.1
+        // Knuth § 7.2.1.1
         let items = (0..N).map(Item::Primary).collect::<Vec<_>>();
         let options = gray_codes::VecSubsets::of(&items)
             .map(|x| x.into_iter().cloned().collect::<Vec<_>>())

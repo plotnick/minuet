@@ -1,5 +1,5 @@
 //! Compositional clauses: formulas containing conjunctions & disjunctions.
-//! Used to represent propositional images; see Lifschitz, "ASP" §§4.6-7.
+//! Used to represent propositional images; see Lifschitz, "ASP" §§ 4.6-7.
 //! The normalization routines were adapted from [Stuart Russel's beautiful
 //! Common Lisp code](https://people.eecs.berkeley.edu/~russell/code/logic/algorithms/normal.lisp).
 //!
@@ -259,7 +259,7 @@ impl Clause {
     }
 }
 
-/// Helper for [CD]NF conversion.
+/// Helper for \[CD\]NF conversion.
 fn merge_arguments<F, G, X, Y>(mut args: Vec<F>) -> F
 where
     F: IntoIterator<Item = X> + FromIterator<G> + Clone,

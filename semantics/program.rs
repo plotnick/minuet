@@ -231,7 +231,7 @@ impl PropositionalRule {
         };
 
         // Replace nontrivial conjunctions in the head as described
-        // in "ASP" §5.4: p ∧ q ∧ r ← s = {p ← s, q ← s, r ← s}.
+        // in "ASP" § 5.4: p ∧ q ∧ r ← s = {p ← s, q ← s, r ← s}.
         rules
             .into_iter()
             .flat_map(|BodyNormalizedRule { head, body }| {
@@ -290,7 +290,7 @@ impl fmt::Display for NormalRule {
 impl Program<NormalRule> {
     /// The penultimate program preprocessing step is shifting, wherein we
     /// produce a set of rules with at most one positive atom for a head;
-    /// see Lifschitz, "ASP" §5.8 and Dodaro definition 10.
+    /// see Lifschitz, "ASP" § 5.8 and Dodaro definition 10.
     pub fn shift(self, trace: Trace) -> Program<ShiftedRule> {
         let shifted = Program::new(self.into_iter().flat_map(NormalRule::shift));
         trace!(trace, Preprocess, "Shifted program:\n{shifted}");
@@ -383,7 +383,7 @@ impl fmt::Display for ShiftedRule {
 impl Program<ShiftedRule> {
     /// The last preprocessing step prior to compilation and solving is
     /// called _Clark's completion_. It turns each implication into an
-    /// equivalence; see Lifschitz, "ASP" §5.9 and Dodaro §3.3.
+    /// equivalence; see Lifschitz, "ASP" § 5.9 and Dodaro § 3.3.
     pub fn complete(self, trace: Trace) -> Program<CompleteRule> {
         // Which rules' heads contain a given atom.
         let mut heads = BTreeMap::<Atom<GroundTerm>, BTreeSet<usize>>::new();
@@ -425,7 +425,7 @@ impl Program<ShiftedRule> {
 
 /// The result of completion is a set of equivalences for each head atom,
 /// where the body is now a *disjunction* of normal (conjunctive, grounded)
-/// rule bodies; see Lifschitz, "ASP" §5.9.
+/// rule bodies; see Lifschitz, "ASP" § 5.9.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompleteRule {
     head: Option<Atom<GroundTerm>>,
@@ -734,7 +734,7 @@ mod test {
         );
     }
 
-    /// Lifschitz, "ASP", §5.2.
+    /// Lifschitz, "ASP", § 5.2.
     #[test]
     fn reduce_asp_5_2() {
         // Rules (5.1)-(5.4).
@@ -812,7 +812,7 @@ mod test {
         );
     }
 
-    /// Lifschitz, "ASP" §5.4.
+    /// Lifschitz, "ASP" § 5.4.
     #[test]
     fn reduce_excluded_middle() {
         let rules = excluded_middle();

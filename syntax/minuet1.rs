@@ -1,3 +1,5 @@
+//! Minuet v1 lexer & parser.
+
 pub mod lexer;
 pub mod parser;
 

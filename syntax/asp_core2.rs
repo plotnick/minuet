@@ -1,3 +1,5 @@
+//! ASP-Core-2 lexer & parser.
+
 pub mod lexer;
 pub mod parser;
 

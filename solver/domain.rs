@@ -1,5 +1,5 @@
 //! Finite domains as sparse sets with reversible memory
-//! (Knuth §7.2.2.3, Christmas Lecture 2023). They are
+//! (Knuth § 7.2.2.3, Christmas Lecture 2023). They are
 //! intended as auxiliary data structures in backtracking
 //! search through large (combinatorial) spaces.
 
