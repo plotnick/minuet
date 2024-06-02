@@ -29,6 +29,12 @@ impl ValueSet {
     }
 }
 
+impl Default for ValueSet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Extend<Constant> for ValueSet {
     fn extend<Iter: IntoIterator<Item = Constant>>(&mut self, iter: Iter) {
         iter.into_iter().for_each(move |elem| {
