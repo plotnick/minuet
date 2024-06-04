@@ -111,23 +111,31 @@ where
 }
 
 /// Things that may go wrong initializing or solving an XCC problem.
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error)]
 pub enum XccError<T, C>
 where
-    T: Ord + Clone + fmt::Display,
-    C: Ord + Clone + fmt::Display,
+    T: Ord + Clone + fmt::Debug,
+    C: Ord + Clone + fmt::Debug,
 {
     #[error("No more solutions")]
     NoMoreSolutions,
-    #[error("Primary item {0} appears more than once in option {1}")]
+    #[error("Primary item {0:?} appears more than once in option {1:?}")]
     PrimaryItemUsedTwice(Item<T, C>, Items<T, C>),
-    #[error("Secondary item {0} inconsistently colored in option {1}")]
+    #[error("Secondary item {0:?} inconsistently colored in option {1:?}")]
     SecondaryItemInconsistentlyColored(Item<T, C>, Items<T, C>),
+    #[error("Too many options to find a solution: {0} > {}", MAX_OPTIONS)]
+    TooManyOptions(usize),
     #[error("Trail exceeded maximum size of {0}")]
     TrailOverflow(usize),
     #[error("Item {0} was not declared")]
     UndeclaredItem(Item<T, C>),
 }
+
+/// Maximum number of options to consider searching for solutions in.
+/// If there are too many options, the solver may try to consume all
+/// available virtual memory in a very tight loop. This tends to make
+/// operating systems unhappy.
+const MAX_OPTIONS: usize = 100_000;
 
 /// Maximum length of the backtracking trail through the search space.
 /// Measured in entries, not items or options; each entry contains a
@@ -196,6 +204,11 @@ where
         options: Options<T, C>,
         trace: Trace,
     ) -> Result<Self, XccError<T, C>> {
+        // Check that we're not tackling an effectively unsolvable problem.
+        if options.len() > MAX_OPTIONS {
+            return Err(XccError::TooManyOptions(options.len()));
+        }
+
         // Make primary items precede secondary ones.
         items.sort_by_key(Item::is_secondary);
 
