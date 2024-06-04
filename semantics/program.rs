@@ -130,7 +130,7 @@ impl Program<BaseRule<GroundTerm>> {
 }
 
 /// A propositional rule has arbitrary (ground) clauses as head and body.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct PropositionalRule {
     pub head: Clause,
     pub body: Clause,
@@ -173,8 +173,8 @@ impl RuleImage for BaseRule<GroundTerm> {
                     .collect()
             }
             Self::Disjunctive(Rule { head, body }) => vec![PropositionalRule {
-                head: Clause::or(head.into_iter().map(|h| h.image(Context::Head))),
-                body: Clause::and(body.into_iter().map(|b| b.image(Context::Body))),
+                head: Clause::or(head.into_iter().map(|h| h.image(Context::Head))).simplify(),
+                body: Clause::and(body.into_iter().map(|b| b.image(Context::Body))).simplify(),
             }],
         }
     }
@@ -184,7 +184,12 @@ impl Program<PropositionalRule> {
     /// The next preprocessing step is normalization, where we bring the head
     /// and body into a canonical form. See "ASP" and Lifschitz & Tang (1999),
     /// "Nested Expressions in Logic Programs".
-    pub fn normalize(self, trace: Trace) -> Program<NormalRule> {
+    pub fn normalize(mut self, trace: Trace) -> Program<NormalRule> {
+        // Head & body simplification produces many duplicate rules; drop them.
+        self.0.sort();
+        self.0.dedup();
+
+        // Normalize remaining rules.
         let normalized = Program::new(self.into_iter().flat_map(PropositionalRule::normalize));
         trace!(trace, Preprocess, "Normalized program:\n{normalized}");
         normalized

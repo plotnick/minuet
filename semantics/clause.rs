@@ -203,6 +203,33 @@ impl Clause {
             Self::Or(d) => d.iter().all(Self::is_positive),
         }
     }
+
+    pub fn is_t(&self) -> bool {
+        match self {
+            Self::Lit(_) => false,
+            Self::And(c) => c.is_empty(),
+            Self::Or(d) => d.iter().any(|c| c.is_t()),
+        }
+    }
+
+    pub fn is_f(&self) -> bool {
+        match self {
+            Self::Lit(_) => false,
+            Self::And(c) => c.iter().any(|c| c.is_f()),
+            Self::Or(d) => d.is_empty(),
+        }
+    }
+
+    /// Trivial simplifications involving ⊤ and ⊥. See "ASP" Table 4.1.
+    pub fn simplify(self) -> Self {
+        match self {
+            Self::Lit(_) => self,
+            Self::And(c) if c.iter().any(Clause::is_f) => Clause::f(),
+            Self::And(c) => Self::and(c.into_iter().filter(|c| !c.is_t())),
+            Self::Or(d) if d.iter().any(Clause::is_t) => Clause::t(),
+            Self::Or(d) => Self::or(d.into_iter().filter(|c| !c.is_f())),
+        }
+    }
 }
 
 impl IntoIterator for Clause {
