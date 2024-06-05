@@ -87,10 +87,10 @@ impl Bounds for Aggregate<GroundTerm> {
                     };
                     let n = Constant::from(formulas.len() as i64);
                     let n_minus_1 = (n.clone() - Constant::from(1)).expect("n - 1");
-                    if upper_bound.contains(&n_minus_1) {
+                    if upper_bound.contains(&Value::Constant(n_minus_1)) {
                         bounds.push(Conjunction::from_iter(formulas.clone()));
                     }
-                    if lower_bound.contains(&n) {
+                    if lower_bound.contains(&Value::Constant(n)) {
                         lower.push(Clause::and(formulas.clone()).negate());
                     }
                 }
@@ -114,7 +114,7 @@ impl PropositionalImage for Application<GroundTerm> {
             Clause::Lit(Literal::Positive(Atom::app(
                 predicate.clone(),
                 args.into_iter()
-                    .map(GroundTerm::Constant)
+                    .map(GroundTerm::constant)
                     .collect::<Vec<GroundTerm>>(),
             )))
         }))
@@ -177,8 +177,8 @@ mod test {
         use Context::*;
 
         assert_eq!(
-            atom!(p).ground().image(Head),
-            Clause::and([Clause::Lit(pos!(p).ground())])
+            atom!(p()).ground().image(Head),
+            Clause::and([Clause::Lit(pos!(p()).ground())])
         );
 
         assert_eq!(
@@ -187,12 +187,12 @@ mod test {
         );
 
         assert_eq!(
-            atom!(p(pool!(1..1))).ground().image(Head),
+            atom!(p(1..1)).ground().image(Head),
             Clause::and([Clause::Lit(pos!(p(1)).ground())])
         );
 
         assert_eq!(
-            atom!(p(pool!(1..2))).ground().image(Head),
+            atom!(p(1..2)).ground().image(Head),
             Clause::and([
                 Clause::Lit(pos!(p(1)).ground()),
                 Clause::Lit(pos!(p(2)).ground())
@@ -205,7 +205,7 @@ mod test {
         );
 
         assert_eq!(
-            atom!(p(pool!(1..2), pool!(2..3))).ground().image(Head),
+            atom!(p(1..2, 2..3)).ground().image(Head),
             Clause::and([
                 Clause::Lit(pos!(p(1, 2)).ground()),
                 Clause::Lit(pos!(p(1, 3)).ground()),
@@ -215,9 +215,7 @@ mod test {
         );
 
         assert_eq!(
-            atom![p(pool!(1..2), pool!(2..3), pool!(3..4))]
-                .ground()
-                .image(Head),
+            atom![p(1..2, 2..3, 3..4)].ground().image(Head),
             Clause::and([
                 Clause::Lit(pos!(p(1, 2, 3)).ground()),
                 Clause::Lit(pos!(p(1, 2, 4)).ground()),
@@ -235,9 +233,7 @@ mod test {
     fn asp_5_7() {
         use Context::*;
         assert_eq!(
-            atom![{pos!(p(1)), pos!(q(pool!(1..3)))}]
-                .ground()
-                .image(Head),
+            atom![{pos!(p(1)), pos!(q(1..3))}].ground().image(Head),
             Clause::and([
                 Clause::or([
                     Clause::Lit(pos!(p(1)).ground()),
@@ -262,7 +258,7 @@ mod test {
     #[test]
     fn asp_5_21() {
         assert_eq!(
-            Program::new([rule![0 {pos!(p(pool!(1..2), pool!(1..2)))} 2]])
+            Program::new([rule![0 {pos!(p(1..2, 1..2))} 2]])
                 .ground()
                 .image(Trace::none()),
             Program::new([
@@ -335,7 +331,7 @@ mod test {
     #[test]
     fn asp_5_22() {
         assert_eq!(
-            Program::new([rule![2 {pos!(p(pool!(1..2), pool!(1..2)))} 2]])
+            Program::new([rule![2 {pos!(p(1..2, 1..2))} 2]])
                 .ground()
                 .image(Trace::none()),
             Program::new([

@@ -357,21 +357,27 @@ mod test {
 
     use super::*;
 
+    macro_rules! answers {
+        {[] => [$($answers: tt)*]} => {
+            [$($answers)*]
+        };
+        {[$pred: ident ($($args: tt)*)] => [$($answers: tt)*]} => {
+            answers!{[] => [atom!($pred($($args)*)).ground(), $($answers)*]}
+        };
+        {[$pred: ident ($($args: tt)*), $($rest: tt)*] => [$($answers: tt)*]} => {
+            answers!{[$($rest)*] => [atom!($pred($($args)*)).ground(), $($answers)*]}
+        };
+    }
+
     macro_rules! answer_set {
-        {$($pred:ident($($arg:tt),*)),*} => {
-            [
-                $(Atom::<Term>::App(
-                Application::<Term>::new(
-                    Symbol::from(stringify!($pred)),
-                    [$(Term::Constant($arg.into())),*]
-                )).ground()),*
-            ].into_iter().collect::<AnswerSet>()
+        {$($answers: tt)*} => {
+            answers!{[$($answers)*] => []}.into_iter().collect::<AnswerSet>()
         }
     }
 
     macro_rules! assert_answers {
-        ($answers:expr, [$({$($pred:ident($($arg:expr),*)),* $(,)?}),* $(,)?]) => {{
-            let expected = [$(answer_set!{$($pred($($arg),*)),*}),*];
+        ($answers: expr, [$({$($expected: tt)*}),* $(,)?]) => {{
+            let expected = [$(answer_set!{$($expected)*}),*];
             assert!($answers == expected,
                     "Expected answer sets:\n  [{}]\nGot answer sets:\n  [{}]",
                     expected.iter().map(format_answer).collect::<Vec<_>>().join(", "),
@@ -714,6 +720,54 @@ mod test {
         let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
         let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
         assert_answers!(answers[..], [{p(), q()}]);
+    }
+
+    #[test]
+    fn symbolic_function_0() {
+        let rules = minuet![p(a())];
+        let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{ p(a()) }]);
+    }
+
+    #[test]
+    fn symbolic_function_1() {
+        let rules = minuet![p(a(x)) if x = 3];
+        let xcc = XccCompiler::new(rules, Trace::none()).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{ p(a(3)) }]);
+    }
+
+    #[test]
+    #[ignore = "needs a proper grounder"]
+    fn symbolic_function_2() {
+        let rules = minuet![p(y) if y = a(x) and x = 3];
+        let xcc = XccCompiler::new(rules, Trace::Preprocess).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{ p(a(3)) }]);
+    }
+
+    /// Lifschitz, "ASP", § 1.2.
+    #[test]
+    #[ignore = "needs a proper grounder"]
+    fn asp_1_2() {
+        let rules = minuet! {
+            large(c) if size(c, s1) and size(uk(), s2) and s1 > s2;
+            size("france", 65);
+            size("germany", 83);
+            size("italy", 61);
+            size("uk", 64);
+        };
+        let xcc = XccCompiler::new(rules, Trace::Preprocess).unwrap();
+        let answers = xcc.run().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_answers!(answers[..], [{
+            size("france", 65),
+            size("germany", 83),
+            size("italy", 61),
+            size("uk", 64),
+            large("france"),
+            large("germany"),
+        }]);
     }
 
     /// Lifschitz, "ASP", exercise 2.7.

@@ -3,6 +3,7 @@
 
 use std::cmp::Ordering;
 use std::collections::btree_set::{self, BTreeSet};
+use std::fmt;
 use std::iter::FromIterator;
 use std::ops;
 
@@ -11,21 +12,38 @@ use minuet_syntax::*;
 use crate::generate::combinations_mixed;
 use crate::ground::*;
 
-/// A set of constant values denoted by some term.
+/// A *value* is either a constant (name, number) or
+/// a *symbolic function* (see "ASP" § 6.6).
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum Value {
+    Constant(Constant),
+    Function(Application<GroundTerm>),
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Constant(c) => f.write_fmt(format_args!("{c}")),
+            Self::Function(a) => f.write_fmt(format_args!("{a}")),
+        }
+    }
+}
+
+/// A set of values denoted by some term.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ValueSet(BTreeSet<Constant>);
+pub struct ValueSet(BTreeSet<Value>);
 
 impl ValueSet {
     pub fn new() -> Self {
         Self(BTreeSet::new())
     }
 
-    pub fn contains(&self, c: &Constant) -> bool {
-        self.0.contains(c)
+    pub fn contains(&self, v: &Value) -> bool {
+        self.0.contains(v)
     }
 
-    pub fn insert(&mut self, c: Constant) {
-        self.0.insert(c);
+    pub fn insert(&mut self, v: Value) {
+        self.0.insert(v);
     }
 }
 
@@ -35,25 +53,22 @@ impl Default for ValueSet {
     }
 }
 
-impl Extend<Constant> for ValueSet {
-    fn extend<Iter: IntoIterator<Item = Constant>>(&mut self, iter: Iter) {
+impl Extend<Value> for ValueSet {
+    fn extend<Iter: IntoIterator<Item = Value>>(&mut self, iter: Iter) {
         iter.into_iter().for_each(move |elem| {
             self.insert(elem);
         });
     }
 }
 
-impl FromIterator<Constant> for ValueSet {
-    fn from_iter<I>(iter: I) -> Self
-    where
-        I: IntoIterator<Item = Constant>,
-    {
+impl FromIterator<Value> for ValueSet {
+    fn from_iter<I: IntoIterator<Item = Value>>(iter: I) -> Self {
         Self(iter.into_iter().collect())
     }
 }
 
 impl IntoIterator for ValueSet {
-    type Item = Constant;
+    type Item = Value;
     type IntoIter = btree_set::IntoIter<Self::Item>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -96,7 +111,7 @@ impl Values for GroundTerm {
     fn values(self) -> ValueSet {
         use GroundTerm::*;
         match self {
-            Constant(c) => [c].into_iter().collect(),
+            Constant(v) => ValueSet::from_iter([*v]),
             Pool(p) => p.values(),
             UnaryOperation(op, x) => {
                 use UnaryOp::*;
@@ -126,12 +141,12 @@ impl Values for GroundTerm {
 
 /// Combine the values of the elements of a vector in all possible ways.
 /// See "ASP" Table 4.4.
-pub fn all_values<T: Values>(v: Vec<T>) -> Vec<Vec<Constant>> {
+pub fn all_values<T: Values>(v: Vec<T>) -> Vec<Vec<Value>> {
     let n = v.len();
     let images = v
         .into_iter()
-        .map(|x| x.values().into_iter().collect::<Vec<Constant>>())
-        .collect::<Vec<Vec<Constant>>>();
+        .map(|x| x.values().into_iter().collect::<Vec<Value>>())
+        .collect::<Vec<Vec<Value>>>();
     let radixes = images.iter().map(Vec::len).collect::<Vec<usize>>();
     let mut combinations = Vec::new();
     combinations_mixed(n, &radixes, |a: &[usize]| {
@@ -141,7 +156,7 @@ pub fn all_values<T: Values>(v: Vec<T>) -> Vec<Vec<Constant>> {
                 .iter()
                 .zip(a.iter())
                 .flat_map(|(image, &i)| image.get(i).cloned())
-                .collect::<Vec<Constant>>(),
+                .collect::<Vec<Value>>(),
         );
     });
     combinations
@@ -153,10 +168,10 @@ pub fn all_values<T: Values>(v: Vec<T>) -> Vec<Vec<Constant>> {
 pub fn for_all_value_pairs(
     lhs: impl Values,
     rhs: impl Values,
-    mut f: impl FnMut(&mut ValueSet, Constant, Constant),
+    mut f: impl FnMut(&mut ValueSet, Value, Value),
 ) -> ValueSet {
-    let l = lhs.values().into_iter().collect::<Vec<Constant>>();
-    let r = rhs.values().into_iter().collect::<Vec<Constant>>();
+    let l = lhs.values().into_iter().collect::<Vec<Value>>();
+    let r = rhs.values().into_iter().collect::<Vec<Value>>();
     let mut v = ValueSet::new();
     combinations_mixed(2, &[l.len(), r.len()], |a: &[usize]| {
         assert_eq!(a.len(), 2);
@@ -171,13 +186,18 @@ pub fn for_all_value_pairs(
 /// instead of `std::ops` traits.
 impl ValueSet {
     fn abs(self) -> Self {
-        ValueSet::from_iter(self.values().into_iter().filter_map(|x| x.abs()))
+        ValueSet::from_iter(self.values().into_iter().filter_map(|x| match x {
+            Value::Constant(c) => c.abs().map(Value::Constant),
+            Value::Function(_) => None,
+        }))
     }
 
     fn pow(self, other: Self) -> Self {
         for_all_value_pairs(self, other, |values, x, y| {
-            if let Some(z) = x.pow(y) {
-                values.insert(z);
+            if let (Value::Constant(x), Value::Constant(y)) = (x, y) {
+                if let Some(z) = x.pow(y) {
+                    values.insert(Value::Constant(z));
+                }
             }
         })
     }
@@ -208,9 +228,12 @@ impl Values for ops::RangeInclusive<ValueSet> {
             self.start().clone(),
             self.end().clone(),
             |values, start, end| {
-                use Constant::*;
-                if let (Number(start), Number(end)) = (start, end) {
-                    values.extend((start..=end).map(Into::into));
+                if let (
+                    Value::Constant(Constant::Number(start)),
+                    Value::Constant(Constant::Number(end)),
+                ) = (start, end)
+                {
+                    values.extend((start..=end).map(Constant::Number).map(Value::Constant));
                 }
             },
         )
@@ -227,8 +250,10 @@ macro_rules! impl_bin_op_for_values {
 
             fn $method(self, rhs: Self) -> Self::Output {
                 for_all_value_pairs(self, rhs, |values, x, y| {
-                    if let Some(z) = $binop.eval(x, y) {
-                        values.insert(z);
+                    if let (Value::Constant(x), Value::Constant(y)) = (x, y) {
+                        if let Some(z) = $binop.eval(x, y) {
+                            values.insert(Value::Constant(z));
+                        }
                     }
                 })
             }
@@ -247,7 +272,10 @@ impl ops::Neg for ValueSet {
     type Output = Self;
 
     fn neg(self) -> Self::Output {
-        ValueSet::from_iter(self.values().into_iter().filter_map(|x| -x))
+        ValueSet::from_iter(self.values().into_iter().filter_map(|x| match x {
+            Value::Constant(x) => (-x).map(Value::Constant),
+            _ => None,
+        }))
     }
 }
 
@@ -256,7 +284,10 @@ impl ops::Not for ValueSet {
     type Output = Self;
 
     fn not(self) -> Self {
-        ValueSet::from_iter(self.values().into_iter().filter_map(|x| !x))
+        ValueSet::from_iter(self.values().into_iter().filter_map(|x| match x {
+            Value::Constant(x) => (!x).map(Value::Constant),
+            _ => None,
+        }))
     }
 }
 
@@ -265,8 +296,8 @@ mod test {
     use super::*;
 
     macro_rules! values {
-        [$($val: expr),*] => {
-            ValueSet::from_iter([$($val.into()),*])
+        [$($val: literal),*] => {
+            ValueSet::from_iter([$(Value::Constant(Constant::from($val))),*])
         };
     }
 

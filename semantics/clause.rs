@@ -341,8 +341,12 @@ impl Dnf {
 
 #[cfg(test)]
 mod test {
+    use crate::ground::Groundable as _;
+
     use super::*;
 
+    /// This is the only place we allow zero-argument predicates
+    /// to drop the parenthesis.
     macro_rules! clause {
         [] => { Clause::t() };
         [($($clause:tt)*)] => { clause![$($clause)*] };
@@ -352,14 +356,26 @@ mod test {
         [$a:tt $(or $b:tt)+] => {
             Clause::or([clause![$a], $(clause![$b]),+])
         };
-        [not not $lit:tt] => {
-            Clause::Lit(nneg!(atom!($lit)).ground())
+        [not not $lit: ident] => {
+            Clause::Lit(nneg!(atom!($lit())).ground())
         };
-        [not $lit:tt] => {
-            Clause::Lit(neg!(atom!($lit)).ground())
+        [not $lit: ident] => {
+            Clause::Lit(neg!($lit()).ground())
         };
-        [$lit:tt] => {
-            Clause::Lit(pos!(atom!($lit)).ground())
+        [$lit: ident] => {
+            Clause::Lit(pos!($lit()).ground())
+        };
+    }
+
+    macro_rules! conj {
+        ([$($c: expr),* $(,)?]) => {
+            Conjunction::from_iter([$($c.ground()),*])
+        };
+    }
+
+    macro_rules! disj {
+        ([$($d: expr),* $(,)?]) => {
+            Disjunction::from_iter([$($d.ground()),*])
         };
     }
 
@@ -399,58 +415,43 @@ mod test {
     fn cnf() {
         let (c0, c1, c2, c3, c4, c5, c6, c7, c8) = test_clauses();
         assert_eq!(c0.cnf(), Cnf::t());
-        assert_eq!(
-            c1.cnf(),
-            Cnf::from_iter([Disjunction::from_iter([pos!(p)])])
-        );
+        assert_eq!(c1.cnf(), Cnf::from_iter([disj!([pos!(p())])]));
         assert_eq!(
             c2.cnf(),
-            Cnf::from_iter([
-                Disjunction::from_iter([pos!(p)]),
-                Disjunction::from_iter([pos!(q)])
-            ])
+            Cnf::from_iter([disj!([pos!(p())]), disj!([pos!(q())])])
         );
-        assert_eq!(
-            c3.cnf(),
-            Cnf::from_iter([Disjunction::from_iter([pos!(p), pos!(q)])])
-        );
+        assert_eq!(c3.cnf(), Cnf::from_iter([disj!([pos!(p()), pos!(q())])]));
         assert_eq!(
             c4.cnf(),
-            Cnf::from_iter([
-                Disjunction::from_iter([pos!(p)]),
-                Disjunction::from_iter([pos!(q), pos!(r)]),
-            ])
+            Cnf::from_iter([disj!([pos!(p())]), disj!([pos!(q()), pos!(r())]),])
         );
         assert_eq!(
             c5.cnf(),
-            Cnf::from_iter([
-                Disjunction::from_iter([pos!(p), pos!(q)]),
-                Disjunction::from_iter([pos!(p), pos!(r)]),
-            ])
+            Cnf::from_iter([disj!([pos!(p()), pos!(q())]), disj!([pos!(p()), pos!(r())]),])
         );
         assert_eq!(
             c6.cnf(),
             Cnf::from_iter([
-                Disjunction::from_iter([neg!(p), pos!(q)]),
-                Disjunction::from_iter([neg!(p), pos!(r), neg!(s)])
+                disj!([neg!(p()), pos!(q())]),
+                disj!([neg!(p()), pos!(r()), neg!(s())])
             ])
         );
         assert_eq!(
             c7.cnf(),
             Cnf::from_iter([
-                Disjunction::from_iter([pos!(q), neg!(q)]),
-                Disjunction::from_iter([pos!(r), neg!(q)]),
-                Disjunction::from_iter([pos!(q), pos!(a), pos!(b)]),
-                Disjunction::from_iter([pos!(r), pos!(a), pos!(b)]),
+                disj!([pos!(q()), neg!(q())]),
+                disj!([pos!(r()), neg!(q())]),
+                disj!([pos!(q()), pos!(a()), pos!(b())]),
+                disj!([pos!(r()), pos!(a()), pos!(b())]),
             ])
         );
         assert_eq!(
             c8.cnf(),
             Cnf::from_iter([
-                Disjunction::from_iter([pos!(a), pos!(b)]),
-                Disjunction::from_iter([pos!(c), pos!(d)]),
-                Disjunction::from_iter([pos!(e), pos!(f)]),
-                Disjunction::from_iter([pos!(g), pos!(h)]),
+                disj!([pos!(a()), pos!(b())]),
+                disj!([pos!(c()), pos!(d())]),
+                disj!([pos!(e()), pos!(f())]),
+                disj!([pos!(g()), pos!(h())]),
             ])
         );
     }
@@ -459,70 +460,55 @@ mod test {
     fn dnf() {
         let (c0, c1, c2, c3, c4, c5, c6, c7, c8) = test_clauses();
         assert_eq!(c0.dnf(), Dnf::from_iter([Conjunction::t()]));
-        assert_eq!(
-            c1.dnf(),
-            Dnf::from_iter([Conjunction::from_iter([pos!(p)])])
-        );
-        assert_eq!(
-            c2.dnf(),
-            Dnf::from_iter([Conjunction::from_iter([pos!(p), pos!(q)])])
-        );
+        assert_eq!(c1.dnf(), Dnf::from_iter([conj!([pos!(p())])]));
+        assert_eq!(c2.dnf(), Dnf::from_iter([conj!([pos!(p()), pos!(q())])]));
         assert_eq!(
             c3.dnf(),
-            Dnf::from_iter([
-                Conjunction::from_iter([pos!(p)]),
-                Conjunction::from_iter([pos!(q)])
-            ])
+            Dnf::from_iter([conj!([pos!(p())]), conj!([pos!(q())])])
         );
         assert_eq!(
             c4.dnf(),
-            Dnf::from_iter([
-                Conjunction::from_iter([pos!(p), pos!(q)]),
-                Conjunction::from_iter([pos!(p), pos!(r)]),
-            ])
+            Dnf::from_iter([conj!([pos!(p()), pos!(q())]), conj!([pos!(p()), pos!(r())]),])
         );
         assert_eq!(
             c5.dnf(),
-            Dnf::from_iter([
-                Conjunction::from_iter([pos!(p)]),
-                Conjunction::from_iter([pos!(q), pos!(r)]),
-            ])
+            Dnf::from_iter([conj!([pos!(p())]), conj!([pos!(q()), pos!(r())]),])
         );
         assert_eq!(
             c6.dnf(),
             Dnf::from_iter([
-                Conjunction::from_iter([neg!(p)]),
-                Conjunction::from_iter([pos!(q), pos!(r)]),
-                Conjunction::from_iter([pos!(q), neg!(s)]),
+                conj!([neg!(p())]),
+                conj!([pos!(q()), pos!(r())]),
+                conj!([pos!(q()), neg!(s())]),
             ])
         );
         assert_eq!(
             c7.dnf(),
             Dnf::from_iter([
-                Conjunction::from_iter([pos!(q), pos!(r)]),
-                Conjunction::from_iter([neg!(q), pos!(a)]),
-                Conjunction::from_iter([neg!(q), pos!(b)]),
+                conj!([pos!(q()), pos!(r())]),
+                conj!([neg!(q()), pos!(a())]),
+                conj!([neg!(q()), pos!(b())]),
             ])
         );
         assert_eq!(
             c8.dnf(),
             Dnf::from_iter([
-                Conjunction::from_iter([pos!(a), pos!(c), pos!(e), pos!(g)]),
-                Conjunction::from_iter([pos!(b), pos!(c), pos!(e), pos!(g)]),
-                Conjunction::from_iter([pos!(a), pos!(d), pos!(e), pos!(g)]),
-                Conjunction::from_iter([pos!(b), pos!(d), pos!(e), pos!(g)]),
-                Conjunction::from_iter([pos!(a), pos!(c), pos!(f), pos!(g)]),
-                Conjunction::from_iter([pos!(b), pos!(c), pos!(f), pos!(g)]),
-                Conjunction::from_iter([pos!(a), pos!(d), pos!(f), pos!(g)]),
-                Conjunction::from_iter([pos!(b), pos!(d), pos!(f), pos!(g)]),
-                Conjunction::from_iter([pos!(a), pos!(c), pos!(e), pos!(h)]),
-                Conjunction::from_iter([pos!(b), pos!(c), pos!(e), pos!(h)]),
-                Conjunction::from_iter([pos!(a), pos!(d), pos!(e), pos!(h)]),
-                Conjunction::from_iter([pos!(b), pos!(d), pos!(e), pos!(h)]),
-                Conjunction::from_iter([pos!(a), pos!(c), pos!(f), pos!(h)]),
-                Conjunction::from_iter([pos!(b), pos!(c), pos!(f), pos!(h)]),
-                Conjunction::from_iter([pos!(a), pos!(d), pos!(f), pos!(h)]),
-                Conjunction::from_iter([pos!(b), pos!(d), pos!(f), pos!(h)]),
+                conj!([pos!(a()), pos!(c()), pos!(e()), pos!(g())]),
+                conj!([pos!(b()), pos!(c()), pos!(e()), pos!(g())]),
+                conj!([pos!(a()), pos!(d()), pos!(e()), pos!(g())]),
+                conj!([pos!(b()), pos!(d()), pos!(e()), pos!(g())]),
+                conj!([pos!(a()), pos!(c()), pos!(f()), pos!(g())]),
+                conj!([pos!(b()), pos!(c()), pos!(f()), pos!(g())]),
+                conj!([pos!(a()), pos!(d()), pos!(f()), pos!(g())]),
+                conj!([pos!(b()), pos!(d()), pos!(f()), pos!(g())]),
+                conj!([pos!(a()), pos!(c()), pos!(e()), pos!(h())]),
+                conj!([pos!(b()), pos!(c()), pos!(e()), pos!(h())]),
+                conj!([pos!(a()), pos!(d()), pos!(e()), pos!(h())]),
+                conj!([pos!(b()), pos!(d()), pos!(e()), pos!(h())]),
+                conj!([pos!(a()), pos!(c()), pos!(f()), pos!(h())]),
+                conj!([pos!(b()), pos!(c()), pos!(f()), pos!(h())]),
+                conj!([pos!(a()), pos!(d()), pos!(f()), pos!(h())]),
+                conj!([pos!(b()), pos!(d()), pos!(f()), pos!(h())]),
             ])
         );
     }

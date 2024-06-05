@@ -195,34 +195,46 @@ mod test {
 
     macro_rules! interp {
         [] => { Interpretation::new() };
-        [$($atom:expr),+] => {{
+        [$($atom: expr),+] => {{
             let mut interp = Interpretation::new();
-            interp.extend([$($atom),+]);
+            interp.extend([$($atom.ground()),+]);
             interp
         }};
     }
 
     #[test]
     fn eval_atom() {
-        assert_eq!(atom!(a).eval(&interp![]), false);
-        assert_eq!(atom!(a).eval(&interp![atom!(a)]), true);
-        assert_eq!(atom!(a).eval(&interp![atom!(b)]), false);
-        assert_eq!(atom!(a).eval(&interp![atom!(a), atom!(b)]), true);
+        assert_eq!(atom!(a()).ground().eval(&interp![]), false);
+        assert_eq!(atom!(a()).ground().eval(&interp![atom!(a())]), true);
+        assert_eq!(atom!(a()).ground().eval(&interp![atom!(b())]), false);
+        assert_eq!(
+            atom!(a()).ground().eval(&interp![atom!(a()), atom!(b())]),
+            true
+        );
     }
 
     #[test]
     fn eval_literal() {
-        assert_eq!(pos!(a).eval(&interp![]), false);
-        assert_eq!(neg!(a).eval(&interp![]), true);
-        assert_eq!(nneg!(a).eval(&interp![]), false);
-        assert_eq!(pos!(a).eval(&interp![atom!(a)]), true);
-        assert_eq!(neg!(a).eval(&interp![atom!(a)]), false);
-        assert_eq!(nneg!(a).eval(&interp![atom!(a)]), true);
-        assert_eq!(pos!(a).eval(&interp![atom!(b)]), false);
-        assert_eq!(neg!(a).eval(&interp![atom!(b)]), true);
-        assert_eq!(nneg!(a).eval(&interp![atom!(b)]), false);
-        assert_eq!(pos!(a).eval(&interp![atom!(a), atom!(b)]), true);
-        assert_eq!(neg!(a).eval(&interp![atom!(a), atom!(b)]), false);
-        assert_eq!(nneg!(a).eval(&interp![atom!(a), atom!(b)]), true);
+        assert_eq!(pos!(a()).ground().eval(&interp![]), false);
+        assert_eq!(neg!(a()).ground().eval(&interp![]), true);
+        assert_eq!(nneg!(a()).ground().eval(&interp![]), false);
+        assert_eq!(pos!(a()).ground().eval(&interp![atom!(a())]), true);
+        assert_eq!(neg!(a()).ground().eval(&interp![atom!(a())]), false);
+        assert_eq!(nneg!(a()).ground().eval(&interp![atom!(a())]), true);
+        assert_eq!(pos!(a()).ground().eval(&interp![atom!(b())]), false);
+        assert_eq!(neg!(a()).ground().eval(&interp![atom!(b())]), true);
+        assert_eq!(nneg!(a()).ground().eval(&interp![atom!(b())]), false);
+        assert_eq!(
+            pos!(a()).ground().eval(&interp![atom!(a()), atom!(b())]),
+            true
+        );
+        assert_eq!(
+            neg!(a()).ground().eval(&interp![atom!(a()), atom!(b())]),
+            false
+        );
+        assert_eq!(
+            nneg!(a()).ground().eval(&interp![atom!(a()), atom!(b())]),
+            true
+        );
     }
 }

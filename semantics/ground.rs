@@ -7,18 +7,21 @@ use std::fmt;
 use minuet_syntax::*;
 
 use crate::generate::combinations_mixed;
-use crate::values::Values as _;
+use crate::values::{Value, Values as _};
 use crate::Program;
 
 /// Map variable names to constant values (in order to ground them).
-pub type Bindings = BTreeMap<Symbol, Constant>;
+pub type Bindings = BTreeMap<Symbol, Value>;
 
 /// A set of variable names (to ground).
 pub type Names = BTreeSet<Symbol>;
 
-/// The _Herbrand Universe_ is the set of all constants in a program.
+/// The _Herbrand Universe_ is the set of constant values in a program.
 /// It is the set of values to which variables may be bound.
-pub type Universe = BTreeSet<Constant>;
+pub type Universe = BTreeSet<Value>;
+
+/// Ungrounded symbolic functions (see "ASP" § 6.6).
+pub type Functions = BTreeSet<Application<Term>>;
 
 /// Terms that can contain variables may be _grounded_, wherein we replace
 /// all variables with all possible values that can be bound to them.
@@ -35,18 +38,25 @@ pub trait Groundable {
     }
     fn constants(&self, universe: &mut Universe);
     fn variables(&self, names: &mut Names);
+    fn functions(&self, functions: &mut Functions);
 }
 
-/// Ground (variable-free) element that represents a fixed set of values.
+/// Ground (variable-free) element that represents a fixed set
+/// of constant values.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum GroundTerm {
-    Constant(Constant),
+    Constant(Box<Value>),
     Pool(Pool<GroundTerm>),
     UnaryOperation(UnaryOp, Box<GroundTerm>),
     BinaryOperation(Box<GroundTerm>, BinOp, Box<GroundTerm>),
 }
 
 impl GroundTerm {
+    /// Boxing constructor.
+    pub fn constant(v: Value) -> Self {
+        Self::Constant(Box::new(v))
+    }
+
     /// Boxing constructor.
     pub fn unary_operation(op: UnaryOp, x: GroundTerm) -> Self {
         Self::UnaryOperation(op, Box::new(x))
@@ -60,7 +70,7 @@ impl GroundTerm {
 
 impl From<Constant> for GroundTerm {
     fn from(c: Constant) -> Self {
-        Self::Constant(c)
+        Self::constant(Value::Constant(c))
     }
 }
 
@@ -87,6 +97,7 @@ impl Groundable for Term {
         match self {
             Constant(_) => true,
             Variable(_) => false,
+            Function(f) => f.is_ground(),
             Pool(p) => p.is_ground(),
             UnaryOperation(_op, x) => x.is_ground(),
             BinaryOperation(x, _op, y) => x.is_ground() && y.is_ground(),
@@ -94,12 +105,14 @@ impl Groundable for Term {
     }
 
     fn ground_with(self, bindings: &Bindings) -> GroundTerm {
+        use Term::*;
         match self {
-            Term::Constant(c) => GroundTerm::Constant(c),
-            Term::Pool(p) => GroundTerm::Pool(p.ground_with(bindings)),
-            Term::Variable(name) => GroundTerm::Constant(bindings[&name].clone()),
-            Term::UnaryOperation(op, x) => GroundTerm::unary_operation(op, x.ground_with(bindings)),
-            Term::BinaryOperation(x, op, y) => {
+            Constant(c) => GroundTerm::constant(Value::Constant(c)),
+            Variable(name) => GroundTerm::constant(bindings[&name].clone()),
+            Function(f) => GroundTerm::constant(Value::Function(f.ground_with(bindings))),
+            Pool(p) => GroundTerm::Pool(p.ground_with(bindings)),
+            UnaryOperation(op, x) => GroundTerm::unary_operation(op, x.ground_with(bindings)),
+            BinaryOperation(x, op, y) => {
                 GroundTerm::binary_operation(x.ground_with(bindings), op, y.ground_with(bindings))
             }
         }
@@ -108,8 +121,9 @@ impl Groundable for Term {
     fn constants(&self, universe: &mut Universe) {
         use Term::*;
         match self {
-            Constant(c) => universe.extend([c.clone()]),
-            Pool(c) => c.constants(universe),
+            Constant(c) => universe.extend([Value::Constant(c.clone())]),
+            Function(f) => f.constants(universe),
+            Pool(p) => p.constants(universe),
             Variable(..) | BinaryOperation(..) | UnaryOperation(..) => (),
         }
     }
@@ -117,6 +131,15 @@ impl Groundable for Term {
     fn variables(&self, names: &mut Names) {
         if let Term::Variable(v) = self {
             names.insert(v.clone());
+        }
+    }
+
+    fn functions(&self, functions: &mut Functions) {
+        use Term::*;
+        match self {
+            Function(f) => functions.extend([f.clone()]),
+            Pool(p) => p.functions(functions),
+            Constant(..) | Variable(..) | BinaryOperation(..) | UnaryOperation(..) => (),
         }
     }
 }
@@ -171,6 +194,21 @@ impl Groundable for Pool<Term> {
             }
         }
     }
+
+    fn functions(&self, functions: &mut Functions) {
+        use Pool::*;
+        match self {
+            Interval(start, end) => {
+                start.functions(functions);
+                end.functions(functions);
+            }
+            Set(terms) => {
+                for term in terms {
+                    term.functions(functions);
+                }
+            }
+        }
+    }
 }
 
 /// Auxiliary atoms are already ground.
@@ -185,6 +223,7 @@ impl Groundable for Auxiliary {
     }
     fn constants(&self, _: &mut Universe) {}
     fn variables(&self, _: &mut Names) {}
+    fn functions(&self, _: &mut Functions) {}
 }
 
 impl Groundable for Aggregate<Term> {
@@ -227,6 +266,12 @@ impl Groundable for Aggregate<Term> {
             choice.variables(names);
         }
     }
+
+    fn functions(&self, functions: &mut Functions) {
+        for choice in &self.choices {
+            choice.functions(functions);
+        }
+    }
 }
 
 impl Groundable for Application<Term> {
@@ -258,6 +303,12 @@ impl Groundable for Application<Term> {
     fn variables(&self, names: &mut Names) {
         for arg in &self.arguments {
             arg.variables(names);
+        }
+    }
+
+    fn functions(&self, functions: &mut Functions) {
+        for arg in &self.arguments {
+            arg.functions(functions);
         }
     }
 }
@@ -298,6 +349,15 @@ impl Groundable for Atom<Term> {
             Aux(aux) => aux.variables(names),
             Agg(agg) => agg.variables(names),
             App(app) => app.variables(names),
+        }
+    }
+
+    fn functions(&self, functions: &mut Functions) {
+        use Atom::*;
+        match self {
+            Aux(aux) => aux.functions(functions),
+            Agg(agg) => agg.functions(functions),
+            App(app) => app.functions(functions),
         }
     }
 }
@@ -346,6 +406,17 @@ impl Groundable for Literal<Term> {
             }
         }
     }
+
+    fn functions(&self, functions: &mut Functions) {
+        use Literal::*;
+        match self {
+            Positive(a) | Negative(a) | DoubleNegative(a) => a.functions(functions),
+            Relation(x, _rel, y) => {
+                x.functions(functions);
+                y.functions(functions);
+            }
+        }
+    }
 }
 
 impl Groundable for Program<BaseRule<Term>> {
@@ -360,11 +431,16 @@ impl Groundable for Program<BaseRule<Term>> {
     fn ground_with(self, _bindings: &Bindings) -> Self::Ground {
         let mut constants = Universe::new();
         self.constants(&mut constants);
-        let constants = constants.into_iter().collect::<Vec<Constant>>();
+        let constants = constants.into_iter().collect::<Vec<Value>>();
 
         let mut variables = Names::new();
         self.variables(&mut variables);
         let variables = variables.into_iter().collect::<Vec<Symbol>>();
+
+        // TODO: Ground symbolic functions.
+        let mut functions = Functions::new();
+        self.functions(&mut functions);
+        let _functions = functions.into_iter().collect::<Vec<Application<Term>>>();
 
         let (ground_rules, var_rules): (Vec<_>, Vec<_>) =
             self.into_iter().partition(|r| r.is_ground());
@@ -403,6 +479,12 @@ impl Groundable for Program<BaseRule<Term>> {
             rule.variables(names);
         }
     }
+
+    fn functions(&self, functions: &mut Functions) {
+        for rule in self.iter() {
+            rule.functions(functions);
+        }
+    }
 }
 
 impl Groundable for BaseRule<Term> {
@@ -435,6 +517,13 @@ impl Groundable for BaseRule<Term> {
             Self::Disjunctive(rule) => rule.variables(names),
         }
     }
+
+    fn functions(&self, functions: &mut Functions) {
+        match self {
+            Self::Choice(rule) => rule.functions(functions),
+            Self::Disjunctive(rule) => rule.functions(functions),
+        }
+    }
 }
 
 impl Groundable for ChoiceRule<Term> {
@@ -462,6 +551,13 @@ impl Groundable for ChoiceRule<Term> {
         self.head.variables(names);
         for b in &self.body {
             b.variables(names);
+        }
+    }
+
+    fn functions(&self, functions: &mut Functions) {
+        self.head.functions(functions);
+        for b in &self.body {
+            b.functions(functions);
         }
     }
 }
@@ -495,6 +591,15 @@ impl Groundable for Rule<Term> {
         }
         for b in &self.body {
             b.variables(names);
+        }
+    }
+
+    fn functions(&self, functions: &mut Functions) {
+        for h in &self.head {
+            h.functions(functions);
+        }
+        for b in &self.body {
+            b.functions(functions);
         }
     }
 }

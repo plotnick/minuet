@@ -248,7 +248,11 @@ fn base_term<S: Clone>(input: Input<S>) -> IResult<Input<S>, Term> {
 }
 
 fn term<S: Clone>(input: Input<S>) -> IResult<Input<S>, Term> {
-    alt((binary_operation, base_term))(input)
+    alt((
+        map(application, Term::Function),
+        binary_operation,
+        base_term,
+    ))(input)
 }
 
 fn head<S: Clone>(input: Input<S>) -> IResult<Input<S>, Vec<Literal<Term>>> {
@@ -323,6 +327,9 @@ mod test {
         ($t: ident) => {
             Token::new(Minuet1Token::$t, ())
         };
+        ([$s: ident]) => {
+            Token::new(Minuet1Token::Symbol(stringify!($s).into()), ())
+        };
     }
 
     macro_rules! toks {
@@ -335,6 +342,19 @@ mod test {
         ($parsed: expr, $expected: expr) => {
             assert_eq!($parsed, Ok((eof(), $expected)));
         };
+    }
+
+    #[test]
+    fn app() {
+        assert_parse!(literal(toks![[p], LParen, RParen]), pos!(p()));
+    }
+
+    #[test]
+    fn app_app() {
+        assert_parse!(
+            literal(toks![[p], LParen, [q], LParen, RParen, RParen]),
+            pos!(p(q()))
+        );
     }
 
     #[test]
@@ -461,15 +481,12 @@ mod test {
 
     #[test]
     fn int() {
-        assert_parse!(term(toks![0, DotDot, 1]), pool!(0 => 1).into());
+        assert_parse!(term(toks![0, DotDot, 1]), pool!(0 => 1));
         assert_eq!(term(toks![0, Dot, Dot, 1]), term(toks![0, DotDot, 1]));
     }
 
     #[test]
     fn neg_int() {
-        assert_parse!(
-            term(toks![Dash, 3, DotDot, 1]),
-            pool!(unary!(Neg, 3) => 1).into()
-        );
+        assert_parse!(term(toks![Dash, 3, DotDot, 1]), pool!(unary!(Neg, 3) => 1));
     }
 }

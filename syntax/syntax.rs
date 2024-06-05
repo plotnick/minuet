@@ -117,18 +117,16 @@ impl ops::Sub for Constant {
 impl ops::Mul for Constant {
     type Output = Option<Self>;
 
+    // Multiplication is iterated addition, Clippy.
+    #[allow(clippy::suspicious_arithmetic_impl)]
     fn mul(self, rhs: Self) -> Self::Output {
         use Constant::*;
         match (self, rhs) {
             (Name(_), Name(_)) => None,
             (Number(x), Number(y)) => Some(Number(x * y)),
-            (Name(a), Number(n)) | (Number(n), Name(a)) => Some(Name(Symbol::new({
-                let mut x = String::new();
-                for _ in 0..n {
-                    x.push_str(a.name());
-                }
-                x
-            }))),
+            (Name(a), Number(n)) | (Number(n), Name(a)) => Some(Name(Symbol(
+                (0..n).fold(String::new(), |acc, _| acc + a.name()),
+            ))),
         }
     }
 }
@@ -376,6 +374,7 @@ impl fmt::Display for BinOp {
 pub enum Term {
     Constant(Constant),
     Variable(Symbol),
+    Function(Application<Term>),
     Pool(Pool<Term>),
     UnaryOperation(UnaryOp, Box<Term>),
     BinaryOperation(Box<Term>, BinOp, Box<Term>),
@@ -390,6 +389,12 @@ impl Term {
     /// Boxing constructor.
     pub fn binary_operation(x: Term, op: BinOp, y: Term) -> Self {
         Self::BinaryOperation(Box::new(x), op, Box::new(y))
+    }
+}
+
+impl From<Application<Term>> for Term {
+    fn from(a: Application<Term>) -> Self {
+        Self::Function(a)
     }
 }
 
@@ -410,6 +415,7 @@ impl fmt::Display for Term {
         use Term::*;
         use UnaryOp::*;
         match self {
+            Function(a) => a.fmt(f),
             Constant(x) => x.fmt(f),
             Variable(x) => x.fmt(f),
             Pool(x) => x.fmt(f),
@@ -498,8 +504,7 @@ impl<T> AggregateBounds<T> {
     }
 }
 
-/// An _n_-ary predicate applied to a tuple of terms.
-/// If _n_ = 0, the arguments are usually elided.
+/// A predicate or function applied to a tuple of terms.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Application<T> {
     pub predicate: Symbol,
@@ -524,19 +529,15 @@ where
             predicate,
             arguments,
         } = self;
-        if arguments.is_empty() {
-            predicate.fmt(f)
-        } else {
-            f.write_fmt(format_args!(
-                "{}({})",
-                predicate,
-                arguments
-                    .iter()
-                    .map(|arg| arg.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ))
-        }
+        f.write_fmt(format_args!(
+            "{}({})",
+            predicate,
+            arguments
+                .iter()
+                .map(|arg| arg.to_string())
+                .collect::<Vec<String>>()
+                .join(", ")
+        ))
     }
 }
 
@@ -640,11 +641,11 @@ where
 }
 
 /// Prior to preprocessing, rules come in two basic flavors: _choice_ and
-/// _disjunctive_. The head of a choice rule like `{a; b; c}` denotes all
-/// possible ways of choosing which of the atoms `a`, `b`, and `c` are
-/// included in the model. The head of a disjunctive rule like `a or b or c`
-/// instead means that any of the three atoms `a`, `b`, or `c` may be in
-/// the model.
+/// _disjunctive_. The head of a choice rule like `{a() or b() or c()}`
+/// denotes all possible ways of choosing which of the atoms `a()`, `b()`,
+/// and `c()` are included in the model. The head of a disjunctive rule
+/// like `a() or b() or c()` instead means that any of the three atoms may
+/// be in the model.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BaseRule<T> {
     Choice(ChoiceRule<T>),
@@ -823,6 +824,7 @@ mod to_rust {
             tokens.extend(match self {
                 Term::Constant(c) => quote!(::minuet_syntax::Term::Constant(#c)),
                 Term::Variable(v) => quote!(::minuet_syntax::Term::Variable(#v)),
+                Term::Function(f) => quote!(::minuet_syntax::Term::Function(#f)),
                 Term::Pool(p) => quote!(::minuet_syntax::Term::Pool(#p)),
                 Term::UnaryOperation(op, t) => {
                     quote!(::minuet_syntax::Term::unary_operation(#op, #t))
@@ -831,6 +833,25 @@ mod to_rust {
                     quote!(::minuet_syntax::Term::binary_operation(#l, #op, #r))
                 }
             })
+        }
+    }
+
+    impl ToTokens for Aggregate<Term> {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            let choices = &self.choices;
+            tokens.extend(if let Some(bounds) = &self.bounds {
+                quote!(::minuet_syntax::Aggregate::new([#(#choices),*], Some(#bounds)))
+            } else {
+                quote!(::minuet_syntax::Aggregate::new([#(#choices),*], None))
+            });
+        }
+    }
+
+    impl ToTokens for AggregateBounds<Term> {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            let lb = &self.lower_bound;
+            let ub = &self.upper_bound;
+            tokens.extend(quote!(::minuet_syntax::AggregateBounds::new(#lb, #ub)));
         }
     }
 
@@ -849,25 +870,6 @@ mod to_rust {
                 Atom::Agg(agg) => todo!("aggregate {agg:?}"),
                 Atom::App(app) => quote!(Atom::App(#app)),
             })
-        }
-    }
-
-    impl ToTokens for AggregateBounds<Term> {
-        fn to_tokens(&self, tokens: &mut TokenStream) {
-            let lb = &self.lower_bound;
-            let ub = &self.upper_bound;
-            tokens.extend(quote!(::minuet_syntax::AggregateBounds::new(#lb, #ub)));
-        }
-    }
-
-    impl ToTokens for Aggregate<Term> {
-        fn to_tokens(&self, tokens: &mut TokenStream) {
-            let choices = &self.choices;
-            tokens.extend(if let Some(bounds) = &self.bounds {
-                quote!(::minuet_syntax::Aggregate::new([#(#choices),*], Some(#bounds)))
-            } else {
-                quote!(::minuet_syntax::Aggregate::new([#(#choices),*], None))
-            });
         }
     }
 
@@ -890,22 +892,6 @@ mod to_rust {
         }
     }
 
-    impl ToTokens for Rule<Term> {
-        fn to_tokens(&self, tokens: &mut TokenStream) {
-            let head = &self.head;
-            let body = &self.body;
-            tokens.extend(quote!(::minuet_syntax::Rule::new([#(#head),*], [#(#body),*])));
-        }
-    }
-
-    impl ToTokens for ChoiceRule<Term> {
-        fn to_tokens(&self, tokens: &mut TokenStream) {
-            let head = &self.head;
-            let body = &self.body;
-            tokens.extend(quote!(::minuet_syntax::ChoiceRule::new(#head, [#(#body),*])));
-        }
-    }
-
     impl ToTokens for BaseRule<Term> {
         fn to_tokens(&self, tokens: &mut TokenStream) {
             tokens.extend(match self {
@@ -918,12 +904,29 @@ mod to_rust {
             })
         }
     }
+
+    impl ToTokens for ChoiceRule<Term> {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            let head = &self.head;
+            let body = &self.body;
+            tokens.extend(quote!(::minuet_syntax::ChoiceRule::new(#head, [#(#body),*])));
+        }
+    }
+
+    impl ToTokens for Rule<Term> {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            let head = &self.head;
+            let body = &self.body;
+            tokens.extend(quote!(::minuet_syntax::Rule::new([#(#head),*], [#(#body),*])));
+        }
+    }
 }
 
 /// These constructor macros can make tests involving syntactic elements
-/// (most of them) much more readable. They are *not* intended as a public
-/// interface, and *should* be behind `#[cfg(test)]`, but [cargo can't
+/// (most of them) much more readable. They are **not** intended as a public
+/// interface, and **should** be behind `#[cfg(test)]`, but [cargo can't
 /// currently export test code across crates](https://github.com/rust-lang/cargo/issues/8379).
+/// They **should not** be allowed to get out of hand.
 #[cfg(feature = "macros")]
 mod macros {
     #[macro_export]
@@ -934,50 +937,75 @@ mod macros {
     }
 
     #[macro_export]
+    macro_rules! args {
+        {[] => [$($args: tt)*]} => {{
+            let mut args = vec![$($args)*];
+            args.reverse();
+            args
+        }};
+        {[$pred: ident ($($args: tt)*) $(, $($rest: tt)*)?] => [$($acc: tt)*]} => {
+            args!{[$($($rest)*)?] => [fun!($pred($($args)*)), $($acc)*]}
+        };
+        {[$var: ident $(, $($rest: tt)*)?] => [$($acc: tt)*]} => {
+            args!{[$($($rest)*)?] => [var!($var), $($acc)*]}
+        };
+        {[$lb: literal .. $ub: literal $(, $($rest: tt)*)?] => [$($acc: tt)*]} => {
+            args!{[$($($rest)*)?] => [pool!($lb..$ub), $($acc)*]}
+        };
+        {[$const: literal $(, $($rest: tt)*)?] => [$($acc: tt)*]} => {
+            args!{[$($($rest)*)?] => [constant!($const), $($acc)*]}
+        };
+    }
+
+    #[macro_export]
+    macro_rules! app {
+        ($name: ident ($($args: tt)*)) => {
+            Application::new(sym!($name), args!([$($args)*] => []))
+        };
+    }
+
+    #[macro_export]
     macro_rules! atom {
         ({$($lit: expr),*}) => {
             Atom::Agg(Aggregate::new([$($lit),*], None))
         };
-        ($pred: ident) => {
-            Atom::App(Application::new(sym!($pred), []))
-        };
-        ($pred: ident($($arg: expr),*)) => {
-            Atom::App(Application::new(sym!($pred), [$($arg.into()),*]))
+        ($pred: ident ($($args: tt)*)) => {
+            Atom::App(app!($pred($($args)*)))
         };
     }
 
     #[macro_export]
     macro_rules! pos {
-        ($pred: ident $(($($args: tt)*))?) => {
-            Literal::Positive(atom!($pred$(($($args)*))?))
-        };
-        ($lit: expr) => {
-            Literal::Positive($lit)
+        ($($atom: tt)*) => {
+            Literal::Positive(atom!($($atom)*))
         };
     }
 
     #[macro_export]
     macro_rules! neg {
-        ($pred: ident $(($($args: tt)*))?) => {
-            Literal::Negative(atom!($pred$(($($args)*))?))
-        };
-        ($lit: expr) => {
-            Literal::Negative($lit)
+        ($($atom: tt)*) => {
+            Literal::Negative(atom!($($atom)*))
         };
     }
 
     #[macro_export]
     macro_rules! nneg {
-        ($pred: ident $(($($args: tt)*))?) => {
-            Literal::DoubleNegative(atom!($pred$(($($args)*))?))
-        };
-        ($lit: expr) => {
-            Literal::DoubleNegative($lit)
+        ($($atom: tt)*) => {
+            Literal::DoubleNegative(atom!($($atom)*))
         };
     }
 
     #[macro_export]
     macro_rules! rel {
+        ($l: ident, $op: ident, $r: ident) => {
+            Literal::relation(var!($l), RelOp::$op, var!($r))
+        };
+        ($l: ident, $op: ident, $r: expr) => {
+            Literal::relation(var!($l), RelOp::$op, $r.into())
+        };
+        ($l: expr, $op: ident, $r: ident) => {
+            Literal::relation($l.into(), RelOp::$op, var!($r))
+        };
         ($l: expr, $op: ident, $r: expr) => {
             Literal::relation($l.into(), RelOp::$op, $r.into())
         };
@@ -989,6 +1017,7 @@ mod macros {
             Term::Constant($c.into())
         };
     }
+
     #[macro_export]
     macro_rules! var {
         ($name: ident) => {
@@ -997,20 +1026,30 @@ mod macros {
     }
 
     #[macro_export]
+    macro_rules! fun {
+        ($name: ident ($($args: tt)*)) => {
+            Term::Function(app!($name($($args)*)))
+        };
+    }
+
+    #[macro_export]
     macro_rules! pool {
         ({$($elt: expr),*}) => {
-            Pool::set([$($elt.into()),*])
+            Term::Pool(Pool::set([$($elt.into()),*]))
         };
         ($start: literal .. $end: literal) => {
-            Pool::interval(constant!($start), constant!($end))
+            Term::Pool(Pool::interval(constant!($start), constant!($end)))
         };
         ($start: expr => $end: expr) => {
-            Pool::interval($start, $end)
+            Term::Pool(Pool::interval($start, $end))
         };
     }
 
     #[macro_export]
     macro_rules! unary {
+        ($op: ident, $e: ident) => {
+            Term::unary_operation(UnaryOp::$op, var!($e))
+        };
         ($op: ident, $e: expr) => {
             Term::unary_operation(UnaryOp::$op, $e.into())
         };
