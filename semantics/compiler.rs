@@ -31,6 +31,7 @@
 use std::collections::BTreeSet;
 
 use gray_codes::{InclusionExclusion, SetMutation};
+use thiserror::Error;
 
 use minuet_solver::*;
 use minuet_syntax::*;
@@ -42,6 +43,15 @@ use crate::program::*;
 
 /// A stable model of the program (Gelfond & Lifschitz 1988).
 pub type AnswerSet = Model;
+
+/// Things that may go wrong compiling a program.
+#[derive(Clone, Debug, Error)]
+pub enum CompileError {
+    #[error(transparent)]
+    Preprocess(#[from] PreprocessingError),
+    #[error(transparent)]
+    Solve(#[from] XccError<Atom<GroundTerm>, bool>),
+}
 
 /// Searching for an answer set may fail.
 pub type AnswerResult = Result<AnswerSet, XccError<Atom<GroundTerm>, bool>>;
@@ -70,11 +80,11 @@ impl XccCompiler {
     pub fn new(
         rules: impl IntoIterator<Item = BaseRule<Term>>,
         trace: Trace,
-    ) -> Result<Self, XccError<Atom<GroundTerm>, bool>> {
+    ) -> Result<Self, CompileError> {
         let program = Program::<BaseRule<Term>>::new(rules);
         trace!(trace, Compile, "Preparing program:\n{}", program);
 
-        let program = program.preprocess(trace);
+        let program = program.preprocess(trace)?;
         trace!(trace, Compile, "Compiling program:\n{}", program);
 
         let (items, options) = Self::compile(&program, trace);
@@ -353,19 +363,21 @@ impl<'a> Iterator for AnswerStep<'a> {
 mod test {
     use minuet_macro::minuet;
 
+    use crate::ground;
     use crate::ground::Groundable as _;
 
     use super::*;
 
     macro_rules! answers {
         {[] => [$($answers: tt)*]} => {
+            // No need to reverse, about to be slurped into a set.
             [$($answers)*]
         };
         {[$pred: ident ($($args: tt)*)] => [$($answers: tt)*]} => {
-            answers!{[] => [atom!($pred($($args)*)).ground(), $($answers)*]}
+            answers!{[] => [ground!(atom!($pred($($args)*))), $($answers)*]}
         };
         {[$pred: ident ($($args: tt)*), $($rest: tt)*] => [$($answers: tt)*]} => {
-            answers!{[$($rest)*] => [atom!($pred($($args)*)).ground(), $($answers)*]}
+            answers!{[$($rest)*] => [ground!(atom!($pred($($args)*))), $($answers)*]}
         };
     }
 

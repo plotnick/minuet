@@ -12,3 +12,4 @@ minuet-macro = { path = "../macro" }
 minuet-solver = { path = "../solver" }
 minuet-syntax = { path = "../syntax", features = ["macros"] }
 minuet-tracer = { path = "../tracer" }
+thiserror.workspace = true

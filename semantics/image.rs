@@ -170,6 +170,7 @@ mod test {
 
     use minuet_tracer::Trace;
 
+    use crate::ground;
     use crate::program::{Program, PropositionalRule};
 
     #[test]
@@ -177,54 +178,54 @@ mod test {
         use Context::*;
 
         assert_eq!(
-            atom!(p()).ground().image(Head),
-            Clause::and([Clause::Lit(pos!(p()).ground())])
+            ground!(atom!(p())).image(Head),
+            Clause::and([Clause::Lit(ground!(pos!(p())))])
         );
 
         assert_eq!(
-            atom!(p(1)).ground().image(Head),
-            Clause::and([Clause::Lit(pos!(p(1)).ground())])
+            ground!(atom!(p(1))).image(Head),
+            Clause::and([Clause::Lit(ground!(pos!(p(1))))])
         );
 
         assert_eq!(
-            atom!(p(1..1)).ground().image(Head),
-            Clause::and([Clause::Lit(pos!(p(1)).ground())])
+            ground!(atom!(p(1..1))).image(Head),
+            Clause::and([Clause::Lit(ground!(pos!(p(1))))])
         );
 
         assert_eq!(
-            atom!(p(1..2)).ground().image(Head),
+            ground!(atom!(p(1..2))).image(Head),
             Clause::and([
-                Clause::Lit(pos!(p(1)).ground()),
-                Clause::Lit(pos!(p(2)).ground())
+                Clause::Lit(ground!(pos!(p(1)))),
+                Clause::Lit(ground!(pos!(p(2))))
             ])
         );
 
         assert_eq!(
-            atom!(p(1, 2)).ground().image(Head),
-            Clause::and([Clause::Lit(pos!(p(1, 2)).ground())])
+            ground!(atom!(p(1, 2))).image(Head),
+            Clause::and([Clause::Lit(ground!(pos!(p(1, 2))))])
         );
 
         assert_eq!(
-            atom!(p(1..2, 2..3)).ground().image(Head),
+            ground!(atom!(p(1..2, 2..3))).image(Head),
             Clause::and([
-                Clause::Lit(pos!(p(1, 2)).ground()),
-                Clause::Lit(pos!(p(1, 3)).ground()),
-                Clause::Lit(pos!(p(2, 2)).ground()),
-                Clause::Lit(pos!(p(2, 3)).ground()),
+                Clause::Lit(ground!(pos!(p(1, 2)))),
+                Clause::Lit(ground!(pos!(p(1, 3)))),
+                Clause::Lit(ground!(pos!(p(2, 2)))),
+                Clause::Lit(ground!(pos!(p(2, 3)))),
             ])
         );
 
         assert_eq!(
-            atom![p(1..2, 2..3, 3..4)].ground().image(Head),
+            ground!(atom!(p(1..2, 2..3, 3..4))).image(Head),
             Clause::and([
-                Clause::Lit(pos!(p(1, 2, 3)).ground()),
-                Clause::Lit(pos!(p(1, 2, 4)).ground()),
-                Clause::Lit(pos!(p(1, 3, 3)).ground()),
-                Clause::Lit(pos!(p(1, 3, 4)).ground()),
-                Clause::Lit(pos!(p(2, 2, 3)).ground()),
-                Clause::Lit(pos!(p(2, 2, 4)).ground()),
-                Clause::Lit(pos!(p(2, 3, 3)).ground()),
-                Clause::Lit(pos!(p(2, 3, 4)).ground()),
+                Clause::Lit(ground!(pos!(p(1, 2, 3)))),
+                Clause::Lit(ground!(pos!(p(1, 2, 4)))),
+                Clause::Lit(ground!(pos!(p(1, 3, 3)))),
+                Clause::Lit(ground!(pos!(p(1, 3, 4)))),
+                Clause::Lit(ground!(pos!(p(2, 2, 3)))),
+                Clause::Lit(ground!(pos!(p(2, 2, 4)))),
+                Clause::Lit(ground!(pos!(p(2, 3, 3)))),
+                Clause::Lit(ground!(pos!(p(2, 3, 4)))),
             ])
         );
     }
@@ -233,23 +234,23 @@ mod test {
     fn asp_5_7() {
         use Context::*;
         assert_eq!(
-            atom![{pos!(p(1)), pos!(q(1..3))}].ground().image(Head),
+            ground!(atom!({pos!(p(1)), pos!(q(1..3))})).image(Head),
             Clause::and([
                 Clause::or([
-                    Clause::Lit(pos!(p(1)).ground()),
-                    Clause::Lit(neg!(p(1)).ground()),
+                    Clause::Lit(ground!(pos!(p(1)))),
+                    Clause::Lit(ground!(neg!(p(1)))),
                 ]),
                 Clause::or([
-                    Clause::Lit(pos!(q(1)).ground()),
-                    Clause::Lit(neg!(q(1)).ground()),
+                    Clause::Lit(ground!(pos!(q(1)))),
+                    Clause::Lit(ground!(neg!(q(1)))),
                 ]),
                 Clause::or([
-                    Clause::Lit(pos!(q(2)).ground()),
-                    Clause::Lit(neg!(q(2)).ground()),
+                    Clause::Lit(ground!(pos!(q(2)))),
+                    Clause::Lit(ground!(neg!(q(2)))),
                 ]),
                 Clause::or([
-                    Clause::Lit(pos!(q(3)).ground()),
-                    Clause::Lit(neg!(q(3)).ground()),
+                    Clause::Lit(ground!(pos!(q(3)))),
+                    Clause::Lit(ground!(neg!(q(3)))),
                 ]),
             ])
         );
@@ -258,36 +259,34 @@ mod test {
     #[test]
     fn asp_5_21() {
         assert_eq!(
-            Program::new([rule![0 {pos!(p(1..2, 1..2))} 2]])
-                .ground()
-                .image(Trace::none()),
+            ground!(Program::new([rule![0 {pos!(p(1..2, 1..2))} 2]])).image(Trace::none()),
             Program::new([
                 // (A.8)
                 PropositionalRule {
                     head: Clause::or([
-                        Clause::Lit(pos!(p(1, 1)).ground()),
-                        Clause::Lit(neg!(p(1, 1)).ground())
+                        Clause::Lit(ground!(pos!(p(1, 1)))),
+                        Clause::Lit(ground!(neg!(p(1, 1))))
                     ]),
                     body: Clause::t(),
                 },
                 PropositionalRule {
                     head: Clause::or([
-                        Clause::Lit(pos!(p(1, 2)).ground()),
-                        Clause::Lit(neg!(p(1, 2)).ground())
+                        Clause::Lit(ground!(pos!(p(1, 2)))),
+                        Clause::Lit(ground!(neg!(p(1, 2))))
                     ]),
                     body: Clause::t(),
                 },
                 PropositionalRule {
                     head: Clause::or([
-                        Clause::Lit(pos!(p(2, 1)).ground()),
-                        Clause::Lit(neg!(p(2, 1)).ground())
+                        Clause::Lit(ground!(pos!(p(2, 1)))),
+                        Clause::Lit(ground!(neg!(p(2, 1))))
                     ]),
                     body: Clause::t(),
                 },
                 PropositionalRule {
                     head: Clause::or([
-                        Clause::Lit(pos!(p(2, 2)).ground()),
-                        Clause::Lit(neg!(p(2, 2)).ground())
+                        Clause::Lit(ground!(pos!(p(2, 2)))),
+                        Clause::Lit(ground!(neg!(p(2, 2))))
                     ]),
                     body: Clause::t(),
                 },
@@ -295,33 +294,33 @@ mod test {
                 PropositionalRule {
                     head: Clause::f(),
                     body: Clause::and([
-                        Clause::Lit(pos!(p(1, 1)).ground()),
-                        Clause::Lit(pos!(p(1, 2)).ground()),
-                        Clause::Lit(pos!(p(2, 1)).ground())
+                        Clause::Lit(ground!(pos!(p(1, 1)))),
+                        Clause::Lit(ground!(pos!(p(1, 2)))),
+                        Clause::Lit(ground!(pos!(p(2, 1))))
                     ])
                 },
                 PropositionalRule {
                     head: Clause::f(),
                     body: Clause::and([
-                        Clause::Lit(pos!(p(1, 1)).ground()),
-                        Clause::Lit(pos!(p(2, 1)).ground()),
-                        Clause::Lit(pos!(p(2, 2)).ground()),
+                        Clause::Lit(ground!(pos!(p(1, 1)))),
+                        Clause::Lit(ground!(pos!(p(2, 1)))),
+                        Clause::Lit(ground!(pos!(p(2, 2)))),
                     ])
                 },
                 PropositionalRule {
                     head: Clause::f(),
                     body: Clause::and([
-                        Clause::Lit(pos!(p(1, 2)).ground()),
-                        Clause::Lit(pos!(p(2, 1)).ground()),
-                        Clause::Lit(pos!(p(2, 2)).ground())
+                        Clause::Lit(ground!(pos!(p(1, 2)))),
+                        Clause::Lit(ground!(pos!(p(2, 1)))),
+                        Clause::Lit(ground!(pos!(p(2, 2))))
                     ])
                 },
                 PropositionalRule {
                     head: Clause::f(),
                     body: Clause::and([
-                        Clause::Lit(pos!(p(1, 1)).ground()),
-                        Clause::Lit(pos!(p(1, 2)).ground()),
-                        Clause::Lit(pos!(p(2, 2)).ground())
+                        Clause::Lit(ground!(pos!(p(1, 1)))),
+                        Clause::Lit(ground!(pos!(p(1, 2)))),
+                        Clause::Lit(ground!(pos!(p(2, 2))))
                     ])
                 },
             ])
@@ -331,36 +330,34 @@ mod test {
     #[test]
     fn asp_5_22() {
         assert_eq!(
-            Program::new([rule![2 {pos!(p(1..2, 1..2))} 2]])
-                .ground()
-                .image(Trace::none()),
+            ground!(Program::new([rule![2 {pos!(p(1..2, 1..2))} 2]])).image(Trace::none()),
             Program::new([
                 // (A.8)
                 PropositionalRule {
                     head: Clause::or([
-                        Clause::Lit(pos!(p(1, 1)).ground()),
-                        Clause::Lit(neg!(p(1, 1)).ground())
+                        Clause::Lit(ground!(pos!(p(1, 1)))),
+                        Clause::Lit(ground!(neg!(p(1, 1))))
                     ]),
                     body: Clause::t(),
                 },
                 PropositionalRule {
                     head: Clause::or([
-                        Clause::Lit(pos!(p(1, 2)).ground()),
-                        Clause::Lit(neg!(p(1, 2)).ground())
+                        Clause::Lit(ground!(pos!(p(1, 2)))),
+                        Clause::Lit(ground!(neg!(p(1, 2))))
                     ]),
                     body: Clause::t(),
                 },
                 PropositionalRule {
                     head: Clause::or([
-                        Clause::Lit(pos!(p(2, 1)).ground()),
-                        Clause::Lit(neg!(p(2, 1)).ground())
+                        Clause::Lit(ground!(pos!(p(2, 1)))),
+                        Clause::Lit(ground!(neg!(p(2, 1))))
                     ]),
                     body: Clause::t(),
                 },
                 PropositionalRule {
                     head: Clause::or([
-                        Clause::Lit(pos!(p(2, 2)).ground()),
-                        Clause::Lit(neg!(p(2, 2)).ground())
+                        Clause::Lit(ground!(pos!(p(2, 2)))),
+                        Clause::Lit(ground!(neg!(p(2, 2))))
                     ]),
                     body: Clause::t(),
                 },
@@ -368,33 +365,33 @@ mod test {
                 PropositionalRule {
                     head: Clause::f(),
                     body: Clause::and([
-                        Clause::Lit(pos!(p(1, 1)).ground()),
-                        Clause::Lit(pos!(p(1, 2)).ground()),
-                        Clause::Lit(pos!(p(2, 1)).ground())
+                        Clause::Lit(ground!(pos!(p(1, 1)))),
+                        Clause::Lit(ground!(pos!(p(1, 2)))),
+                        Clause::Lit(ground!(pos!(p(2, 1))))
                     ])
                 },
                 PropositionalRule {
                     head: Clause::f(),
                     body: Clause::and([
-                        Clause::Lit(pos!(p(1, 1)).ground()),
-                        Clause::Lit(pos!(p(2, 1)).ground()),
-                        Clause::Lit(pos!(p(2, 2)).ground()),
+                        Clause::Lit(ground!(pos!(p(1, 1)))),
+                        Clause::Lit(ground!(pos!(p(2, 1)))),
+                        Clause::Lit(ground!(pos!(p(2, 2)))),
                     ])
                 },
                 PropositionalRule {
                     head: Clause::f(),
                     body: Clause::and([
-                        Clause::Lit(pos!(p(1, 2)).ground()),
-                        Clause::Lit(pos!(p(2, 1)).ground()),
-                        Clause::Lit(pos!(p(2, 2)).ground())
+                        Clause::Lit(ground!(pos!(p(1, 2)))),
+                        Clause::Lit(ground!(pos!(p(2, 1)))),
+                        Clause::Lit(ground!(pos!(p(2, 2))))
                     ])
                 },
                 PropositionalRule {
                     head: Clause::f(),
                     body: Clause::and([
-                        Clause::Lit(pos!(p(1, 1)).ground()),
-                        Clause::Lit(pos!(p(1, 2)).ground()),
-                        Clause::Lit(pos!(p(2, 2)).ground())
+                        Clause::Lit(ground!(pos!(p(1, 1)))),
+                        Clause::Lit(ground!(pos!(p(1, 2)))),
+                        Clause::Lit(ground!(pos!(p(2, 2))))
                     ])
                 },
                 // (A.10)
@@ -402,28 +399,28 @@ mod test {
                     head: Clause::f(),
                     body: Clause::and([
                         Clause::or([
-                            Clause::Lit(neg!(p(1, 1)).ground()),
-                            Clause::Lit(neg!(p(1, 2)).ground()),
+                            Clause::Lit(ground!(neg!(p(1, 1)))),
+                            Clause::Lit(ground!(neg!(p(1, 2)))),
                         ]),
                         Clause::or([
-                            Clause::Lit(neg!(p(1, 2)).ground()),
-                            Clause::Lit(neg!(p(2, 1)).ground()),
+                            Clause::Lit(ground!(neg!(p(1, 2)))),
+                            Clause::Lit(ground!(neg!(p(2, 1)))),
                         ]),
                         Clause::or([
-                            Clause::Lit(neg!(p(1, 1)).ground()),
-                            Clause::Lit(neg!(p(2, 1)).ground()),
+                            Clause::Lit(ground!(neg!(p(1, 1)))),
+                            Clause::Lit(ground!(neg!(p(2, 1)))),
                         ]),
                         Clause::or([
-                            Clause::Lit(neg!(p(2, 1)).ground()),
-                            Clause::Lit(neg!(p(2, 2)).ground()),
+                            Clause::Lit(ground!(neg!(p(2, 1)))),
+                            Clause::Lit(ground!(neg!(p(2, 2)))),
                         ]),
                         Clause::or([
-                            Clause::Lit(neg!(p(1, 2)).ground()),
-                            Clause::Lit(neg!(p(2, 2)).ground()),
+                            Clause::Lit(ground!(neg!(p(1, 2)))),
+                            Clause::Lit(ground!(neg!(p(2, 2)))),
                         ]),
                         Clause::or([
-                            Clause::Lit(neg!(p(1, 1)).ground()),
-                            Clause::Lit(neg!(p(2, 2)).ground()),
+                            Clause::Lit(ground!(neg!(p(1, 1)))),
+                            Clause::Lit(ground!(neg!(p(2, 2)))),
                         ]),
                     ])
                 },

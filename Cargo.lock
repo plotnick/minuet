@@ -66,6 +66,7 @@ dependencies = [
  "minuet-solver",
  "minuet-syntax",
  "minuet-tracer",
+ "thiserror",
 ]
 
 [[package]]

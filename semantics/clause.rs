@@ -341,9 +341,8 @@ impl Dnf {
 
 #[cfg(test)]
 mod test {
-    use crate::ground::Groundable as _;
-
     use super::*;
+    use crate::ground;
 
     /// This is the only place we allow zero-argument predicates
     /// to drop the parenthesis.
@@ -357,25 +356,25 @@ mod test {
             Clause::or([clause![$a], $(clause![$b]),+])
         };
         [not not $lit: ident] => {
-            Clause::Lit(nneg!(atom!($lit())).ground())
+            Clause::Lit(ground!(nneg!(atom!($lit()))))
         };
         [not $lit: ident] => {
-            Clause::Lit(neg!($lit()).ground())
+            Clause::Lit(ground!(neg!($lit())))
         };
         [$lit: ident] => {
-            Clause::Lit(pos!($lit()).ground())
+            Clause::Lit(ground!(pos!($lit())))
         };
     }
 
     macro_rules! conj {
         ([$($c: expr),* $(,)?]) => {
-            Conjunction::from_iter([$($c.ground()),*])
+            Conjunction::from_iter([$(ground!($c)),*])
         };
     }
 
     macro_rules! disj {
         ([$($d: expr),* $(,)?]) => {
-            Disjunction::from_iter([$($d.ground()),*])
+            Disjunction::from_iter([$(ground!($d)),*])
         };
     }
 

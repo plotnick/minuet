@@ -294,6 +294,7 @@ impl ops::Not for ValueSet {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::ground;
 
     macro_rules! values {
         [$($val: literal),*] => {
@@ -303,13 +304,13 @@ mod test {
 
     macro_rules! assert_values {
         ($term:expr, $values:expr) => {
-            assert_eq!($term.ground().values(), $values);
+            assert_eq!(ground!($term).values(), $values);
         };
     }
 
     macro_rules! assert_values_eq {
         ($term:expr, $other:expr) => {
-            assert_eq!($term.ground().values(), $other.ground().values());
+            assert_eq!(ground!($term).values(), ground!($other).values());
         };
     }
 
@@ -450,18 +451,16 @@ mod test {
 
     #[test]
     fn cmp() {
-        assert!(pool!(-2..0).ground().values() < pool!(1..3).ground().values());
-        assert!(pool!(1..3).ground().values() > pool!(-2..0).ground().values());
-        assert!(pool!(1..3).ground().values() >= pool!(-2..0).ground().values());
-        assert!(pool!(-2..1)
-            .ground()
+        assert!(ground!(pool!(-2..0)).values() < ground!(pool!(1..3)).values());
+        assert!(ground!(pool!(1..3)).values() > ground!(pool!(-2..0)).values());
+        assert!(ground!(pool!(1..3)).values() >= ground!(pool!(-2..0)).values());
+        assert!(ground!(pool!(-2..1))
             .values()
-            .partial_cmp(&pool!(1..3).ground().values())
+            .partial_cmp(&ground!(pool!(1..3)).values())
             .is_none());
-        assert!(pool!(-2..1)
-            .ground()
+        assert!(ground!(pool!(-2..1))
             .values()
-            .partial_cmp(&pool!(1..3).ground().values())
+            .partial_cmp(&ground!(pool!(1..3)).values())
             .is_none());
     }
 }

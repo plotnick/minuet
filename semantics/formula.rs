@@ -192,49 +192,44 @@ mod test {
     #![allow(clippy::bool_assert_comparison)]
 
     use super::*;
+    use crate::ground;
 
     macro_rules! interp {
         [] => { Interpretation::new() };
         [$($atom: expr),+] => {{
             let mut interp = Interpretation::new();
-            interp.extend([$($atom.ground()),+]);
+            interp.extend([$($atom),+]);
             interp
         }};
     }
 
+    macro_rules! assert_interp {
+        ($term: expr, [$($interp: expr),*], $result: literal) => {
+            assert_eq!(ground!($term).eval(&interp![$(ground!($interp)),*]), $result)
+        };
+    }
+
     #[test]
     fn eval_atom() {
-        assert_eq!(atom!(a()).ground().eval(&interp![]), false);
-        assert_eq!(atom!(a()).ground().eval(&interp![atom!(a())]), true);
-        assert_eq!(atom!(a()).ground().eval(&interp![atom!(b())]), false);
-        assert_eq!(
-            atom!(a()).ground().eval(&interp![atom!(a()), atom!(b())]),
-            true
-        );
+        assert_interp!(atom!(a()), [], false);
+        assert_interp!(atom!(a()), [atom!(a())], true);
+        assert_interp!(atom!(a()), [atom!(b())], false);
+        assert_interp!(atom!(a()), [atom!(a()), atom!(b())], true);
     }
 
     #[test]
     fn eval_literal() {
-        assert_eq!(pos!(a()).ground().eval(&interp![]), false);
-        assert_eq!(neg!(a()).ground().eval(&interp![]), true);
-        assert_eq!(nneg!(a()).ground().eval(&interp![]), false);
-        assert_eq!(pos!(a()).ground().eval(&interp![atom!(a())]), true);
-        assert_eq!(neg!(a()).ground().eval(&interp![atom!(a())]), false);
-        assert_eq!(nneg!(a()).ground().eval(&interp![atom!(a())]), true);
-        assert_eq!(pos!(a()).ground().eval(&interp![atom!(b())]), false);
-        assert_eq!(neg!(a()).ground().eval(&interp![atom!(b())]), true);
-        assert_eq!(nneg!(a()).ground().eval(&interp![atom!(b())]), false);
-        assert_eq!(
-            pos!(a()).ground().eval(&interp![atom!(a()), atom!(b())]),
-            true
-        );
-        assert_eq!(
-            neg!(a()).ground().eval(&interp![atom!(a()), atom!(b())]),
-            false
-        );
-        assert_eq!(
-            nneg!(a()).ground().eval(&interp![atom!(a()), atom!(b())]),
-            true
-        );
+        assert_interp!(pos!(a()), [], false);
+        assert_interp!(neg!(a()), [], true);
+        assert_interp!(nneg!(a()), [], false);
+        assert_interp!(pos!(a()), [atom!(a())], true);
+        assert_interp!(neg!(a()), [atom!(a())], false);
+        assert_interp!(nneg!(a()), [atom!(a())], true);
+        assert_interp!(pos!(a()), [atom!(b())], false);
+        assert_interp!(neg!(a()), [atom!(b())], true);
+        assert_interp!(nneg!(a()), [atom!(b())], false);
+        assert_interp!(pos!(a()), [atom!(a()), atom!(b())], true);
+        assert_interp!(neg!(a()), [atom!(a()), atom!(b())], false);
+        assert_interp!(nneg!(a()), [atom!(a()), atom!(b())], true);
     }
 }

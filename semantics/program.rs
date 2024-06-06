@@ -9,12 +9,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::ops::Index;
 
+use thiserror::Error;
+
 use minuet_syntax::*;
 use minuet_tracer::*;
 
 use crate::clause::{Clause, Conjunction, Disjunction, Dnf};
 use crate::formula::{Atoms, Formula, Interpretation};
-use crate::ground::{GroundTerm, Groundable as _};
+use crate::ground::{GroundTerm, Groundable as _, GroundingError};
 use crate::image::{Bounds as _, Context, PropositionalImage as _};
 use crate::values::Value;
 
@@ -98,31 +100,41 @@ where
     }
 }
 
+#[derive(Clone, Debug, Error)]
+pub enum PreprocessingError {
+    #[error(transparent)]
+    Grounding(#[from] GroundingError),
+}
+
 impl Program<BaseRule<Term>> {
     /// A convenience method to "skip to the end": run through each
     /// preprocessing step in sequence and return the result.
-    pub fn preprocess(self, trace: Trace) -> Program<CompleteRule> {
+    pub fn preprocess(self, trace: Trace) -> Result<Program<CompleteRule>, PreprocessingError> {
         trace!(trace, Preprocess, "Base program:\n{self}");
-        self.ground_program(trace)
+        Ok(self
+            .ground_program(trace)?
             .image(trace)
             .normalize(trace)
             .shift(trace)
-            .complete(trace)
+            .complete(trace))
     }
 
-    /// The first step in program preprocessing is grounding: replace
-    /// all terms over variables with ground (variable-free) terms.
-    /// See the `Groundable` trait for details.
-    pub fn ground_program(self, trace: Trace) -> Program<BaseRule<GroundTerm>> {
-        let grounded = self.ground();
+    /// The first step in program preprocessing is grounding: replacing
+    /// terms over variables with ground (variable-free) terms. See the
+    /// `Groundable` trait for details.
+    pub fn ground_program(
+        self,
+        trace: Trace,
+    ) -> Result<Program<BaseRule<GroundTerm>>, GroundingError> {
+        let grounded = self.ground()?;
         trace!(trace, Preprocess, "Grounded program:\n{grounded}");
-        grounded
+        Ok(grounded)
     }
 }
 
 impl Program<BaseRule<GroundTerm>> {
     /// The next step in program preprocessing is finding the propositional
-    /// image (logical formula representation) of each rule.
+    /// image (logical formula representation) of each (ground) rule.
     pub fn image(self, trace: Trace) -> Program<PropositionalRule> {
         let image = Program::new(self.into_iter().flat_map(BaseRule::<GroundTerm>::image));
         trace!(trace, Preprocess, "Propositional image:\n{image}");
@@ -511,12 +523,13 @@ impl CompleteRule {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::ground;
 
     macro_rules! nrule {
         ([$($head: expr),*], [$($body: expr),*]) => {
             NormalRule::new(
-                Disjunction::from_iter([$($head.ground()),*]),
-                Conjunction::from_iter([$($body.ground()),*])
+                Disjunction::from_iter([$(ground!($head)),*]),
+                Conjunction::from_iter([$(ground!($body)),*])
             )
         };
     }
@@ -525,13 +538,13 @@ mod test {
         ([], [$($body: expr),*]) => {
             ShiftedRule::new(
                 None,
-                Conjunction::from_iter([$($body.ground()),*])
+                Conjunction::from_iter([$(ground!($body)),*])
             )
         };
         ($pred: ident ($($args: tt)*), [$($body: expr),*]) => {
             ShiftedRule::new(
-                Some(atom!($pred($($args)*)).ground()),
-                Conjunction::from_iter([$($body.ground()),*])
+                Some(ground!(atom!($pred($($args)*)))),
+                Conjunction::from_iter([$(ground!($body)),*])
             )
         };
     }
@@ -540,21 +553,34 @@ mod test {
         ([], [$([$($conj: expr),*]),*]) => {
             CompleteRule::new(
                 None,
-                Disjunction::from_iter([$(Conjunction::from_iter([$($conj.ground()),*])),*])
+                Disjunction::from_iter([$(Conjunction::from_iter([$(ground!($conj)),*])),*])
             )
         };
         ($pred: ident ($($args: tt)*), [$([$($conj: expr),*]),*]) => {
             CompleteRule::new(
-                Some(atom!($pred($($args)*)).ground()),
-                Disjunction::from_iter([$(Conjunction::from_iter([$($conj.ground()),*])),*])
+                Some(ground!(atom!($pred($($args)*)))),
+                Disjunction::from_iter([$(Conjunction::from_iter([$(ground!($conj)),*])),*])
             )
         };
     }
 
     macro_rules! interp {
         ({$($pred: ident ($($args: tt)*)),* $(,)?}) => {
-            [$(atom!($pred($($args)*)).ground()),*].into_iter().collect::<Interpretation>()
+            [$(ground!(atom!($pred($($args)*)))),*].into_iter().collect::<Interpretation>()
         }
+    }
+
+    macro_rules! assert_preprocess {
+        ($rules: expr, $complete: expr) => {
+            assert_preprocess!($rules, $complete, Trace::none())
+        };
+        ($rules: expr, $complete: expr, $trace: expr) => {{
+            let program = Program::new($rules)
+                .preprocess($trace)
+                .expect("can't preprocess test program");
+            assert_eq!(program.as_slice(), $complete);
+            program
+        }};
     }
 
     /// This program is already ground.
@@ -562,8 +588,8 @@ mod test {
     fn ground_trivial_0() {
         let rules = [rule!([pos!(a()), pos!(b()), pos!(c())])];
         assert_eq!(
-            Program::new(rules.clone()).ground().as_slice(),
-            [rule!([pos!(a()), pos!(b()), pos!(c())]).ground()]
+            ground!(Program::new(rules.clone())).as_slice(),
+            [ground!(rule!([pos!(a()), pos!(b()), pos!(c())]))]
         );
     }
 
@@ -572,10 +598,10 @@ mod test {
     fn ground_trivial_1() {
         let rules = [rule!([pos!(p(x))], [pos!(p(1)), pos!(p(2))])];
         assert_eq!(
-            Program::new(rules).ground().as_slice(),
+            ground!(Program::new(rules)).as_slice(),
             [
-                rule!([pos!(p(1))], [pos!(p(1)), pos!(p(2))]).ground(),
-                rule!([pos!(p(2))], [pos!(p(1)), pos!(p(2))]).ground(),
+                ground!(rule!([pos!(p(1))], [pos!(p(1)), pos!(p(2))])),
+                ground!(rule!([pos!(p(2))], [pos!(p(1)), pos!(p(2))])),
             ]
         );
     }
@@ -588,20 +614,20 @@ mod test {
             rule!([pos!(q(x))], [pos!(p(x, y)), neg!(q(y))]),
         ];
         assert_eq!(
-            Program::new(rules).ground().as_slice(),
+            ground!(Program::new(rules)).as_slice(),
             [
-                rule!([pos!(p(1, 2))]).ground(),
-                rule!([pos!(q(1))], [pos!(p(1, 1)), neg!(q(1))]).ground(),
-                rule!([pos!(q(1))], [pos!(p(1, 2)), neg!(q(2))]).ground(),
-                rule!([pos!(q(2))], [pos!(p(2, 1)), neg!(q(1))]).ground(),
-                rule!([pos!(q(2))], [pos!(p(2, 2)), neg!(q(2))]).ground(),
+                ground!(rule!([pos!(p(1, 2))])),
+                ground!(rule!([pos!(q(1))], [pos!(p(1, 1)), neg!(q(1))])),
+                ground!(rule!([pos!(q(1))], [pos!(p(1, 2)), neg!(q(2))])),
+                ground!(rule!([pos!(q(2))], [pos!(p(2, 1)), neg!(q(1))])),
+                ground!(rule!([pos!(q(2))], [pos!(p(2, 2)), neg!(q(2))])),
             ]
         );
     }
 
     #[test]
     fn normalize_constraint() {
-        let mut images = rule!([], [pos!(p()), pos!(q())]).ground().image();
+        let mut images = ground!(rule!([], [pos!(p()), pos!(q())])).image();
         assert_eq!(images.len(), 1);
         assert_eq!(
             images.remove(0).normalize(),
@@ -611,7 +637,7 @@ mod test {
 
     #[test]
     fn normalize_choice() {
-        let mut images = rule![{ pos!(p()) }].ground().image();
+        let mut images = ground!(rule![{ pos!(p()) }]).image();
         assert_eq!(images.len(), 1);
         assert_eq!(
             images.remove(0).normalize(),
@@ -621,7 +647,7 @@ mod test {
 
     #[test]
     fn normalize_choices() {
-        let mut images = rule![{pos!(p()), pos!(q()), pos!(r())}].ground().image();
+        let mut images = ground!(rule![{pos!(p()), pos!(q()), pos!(r())}]).image();
         assert_eq!(images.len(), 3);
         assert_eq!(
             images.remove(2).normalize(),
@@ -669,45 +695,34 @@ mod test {
     }
 
     #[test]
-    fn complete_trivial_0() {
-        let rules = [rule!([pos!(p())])];
-        let complete = Program::new(rules).preprocess(Trace::none());
-        assert_eq!(
-            complete.into_iter().collect::<Vec<_>>(),
-            [crule!(p(), [[]])]
-        );
+    fn preprocess_trivial_0() {
+        assert_preprocess!([rule!([pos!(p())])], [crule!(p(), [[]])]);
     }
 
     #[test]
-    fn complete_trivial_1() {
-        let rules = [rule!([pos!(a())], [pos!(b())])];
-        let complete = Program::new(rules).preprocess(Trace::none());
-        assert_eq!(
-            complete.into_iter().collect::<Vec<_>>(),
+    fn preprocess_trivial_1() {
+        assert_preprocess!(
+            [rule!([pos!(a())], [pos!(b())])],
             [crule![a(), [[pos!(b())]]]]
         );
     }
 
     #[test]
-    fn complete_constraint() {
-        let rules = [rule!([], [pos!(p()), pos!(q())])];
-        let complete = Program::new(rules).preprocess(Trace::none());
-        assert_eq!(
-            complete.into_iter().collect::<Vec<_>>(),
+    fn preprocess_constraint() {
+        assert_preprocess!(
+            [rule!([], [pos!(p()), pos!(q())])],
             [crule!([], [[pos!(p()), pos!(q())]])]
         );
     }
 
     /// Dodaro, example 10.
     #[test]
-    fn complete_dodaro_example_10() {
-        let rules = [
-            rule!([pos!(a()), pos!(b())]),
-            rule!([pos!(c()), pos!(d())], [pos!(a())]),
-        ];
-        let complete = Program::new(rules).preprocess(Trace::none());
-        assert_eq!(
-            complete.into_iter().collect::<Vec<_>>(),
+    fn dodaro_example_10() {
+        assert_preprocess!(
+            [
+                rule!([pos!(a()), pos!(b())]),
+                rule!([pos!(c()), pos!(d())], [pos!(a())]),
+            ],
             [
                 crule!(a(), [[neg!(b())]]),
                 crule!(b(), [[neg!(a())]]),
@@ -718,41 +733,45 @@ mod test {
     }
 
     /// Alviano and Dodaro, "Completion of Disjunctive Logic Programs" (IJCAI-16).
-    fn alviano_dodaro_example_1() -> Vec<BaseRule<Term>> {
-        vec![
-            rule!([pos!(a()), pos!(b()), pos!(c())]),
-            rule!([pos!(b())], [pos!(a())]),
-            rule!([pos!(c())], [neg!(a())]),
-        ]
-    }
-
     #[test]
-    fn complete_alviano_dodaro_example_1() {
-        let rules = alviano_dodaro_example_1();
-        let complete = Program::new(rules).preprocess(Trace::none());
-        assert_eq!(
-            complete.into_iter().collect::<Vec<_>>(),
+    fn alviano_dodaro_example_1() {
+        let complete = assert_preprocess!(
+            [
+                rule!([pos!(a()), pos!(b()), pos!(c())]),
+                rule!([pos!(b())], [pos!(a())]),
+                rule!([pos!(c())], [neg!(a())]),
+            ],
             [
                 crule!(a(), [[neg!(b()), neg!(c())]]),
                 crule!(b(), [[neg!(a()), neg!(c())], [pos!(a())]]),
                 crule!(c(), [[neg!(a()), neg!(b())], [neg!(a())]]),
             ]
         );
+
+        let interp = interp!({ c() });
+        let reduct = complete.clone().reduce(&interp);
+        assert_eq!(
+            reduct.as_slice(),
+            [
+                crule!(a(), []),
+                crule!(b(), [[pos!(a())]]),
+                crule!(c(), [[], []]),
+            ]
+        );
+        assert!(complete.eval(&interp));
     }
 
     /// Lifschitz, "ASP", § 5.2.
     #[test]
-    fn reduce_asp_5_2() {
+    fn asp_5_2() {
         // Rules (5.1)-(5.4).
-        let rules = [
-            rule!([pos!(p())]),
-            rule!([pos!(q())]),
-            rule!([pos!(r())], [pos!(p()), neg!(s())]),
-            rule!([pos!(s())], [pos!(q())]),
-        ];
-        let complete = Program::new(rules).preprocess(Trace::none());
-        assert_eq!(
-            complete.iter().cloned().collect::<Vec<_>>(),
+        let complete = assert_preprocess!(
+            [
+                rule!([pos!(p())]),
+                rule!([pos!(q())]),
+                rule!([pos!(r())], [pos!(p()), neg!(s())]),
+                rule!([pos!(s())], [pos!(q())]),
+            ],
             [
                 crule!(p(), [[]]),
                 crule!(q(), [[]]),
@@ -765,7 +784,7 @@ mod test {
         let interp = interp!({p(), q(), s()});
         let reduct = complete.clone().reduce(&interp);
         assert_eq!(
-            reduct.into_iter().collect::<Vec<_>>(),
+            reduct.as_slice(),
             [
                 crule!(p(), [[]]),
                 crule!(q(), [[]]),
@@ -779,7 +798,7 @@ mod test {
         let interp = interp!({p(), q()});
         let reduct = complete.clone().reduce(&interp);
         assert_eq!(
-            reduct.iter().cloned().collect::<Vec<_>>(),
+            reduct.as_slice(),
             [
                 crule!(p(), [[]]),
                 crule!(q(), [[]]),
@@ -790,52 +809,22 @@ mod test {
         assert!(!reduct.eval(&interp));
     }
 
+    /// Lifschitz, "ASP" § 5.4: P ∨ ¬P.
     #[test]
-    fn reduce_alviano_dodaro_example_1() {
-        let rules = alviano_dodaro_example_1();
-        let program = Program::new(rules).preprocess(Trace::none());
-        let interp = interp!({ c() });
-        let reduct = program.clone().reduce(&interp);
-        assert_eq!(
-            reduct.into_iter().collect::<Vec<_>>(),
-            [
-                crule!(a(), []),
-                crule!(b(), [[pos!(a())]]),
-                crule!(c(), [[], []]),
-            ]
-        );
-        assert!(program.eval(&interp));
-    }
-
-    /// P ∨ ¬P
-    fn excluded_middle() -> Vec<BaseRule<Term>> {
-        vec![rule!([pos!(p()), neg!(p())])]
-    }
-
-    #[test]
-    fn complete_excluded_middle() {
-        let rules = excluded_middle();
-        let complete = Program::new(rules).preprocess(Trace::none());
-        assert_eq!(
-            complete.into_iter().collect::<Vec<_>>(),
+    fn excluded_middle() {
+        let complete = assert_preprocess!(
+            [rule!([pos!(p()), neg!(p())])],
             [crule!(p(), [[nneg!(p())]])]
         );
-    }
-
-    /// Lifschitz, "ASP" § 5.4.
-    #[test]
-    fn reduce_excluded_middle() {
-        let rules = excluded_middle();
-        let complete = Program::new(rules).preprocess(Trace::none());
 
         let interp = interp!({});
         let reduct = complete.clone().reduce(&interp);
         assert!(reduct.eval(&interp));
-        assert_eq!(reduct.into_iter().collect::<Vec<_>>(), [crule!(p(), [])]);
+        assert_eq!(reduct.as_slice(), [crule!(p(), [])]);
 
         let interp = interp!({ p() });
         let reduct = complete.clone().reduce(&interp);
         assert!(reduct.eval(&interp));
-        assert_eq!(reduct.into_iter().collect::<Vec<_>>(), [crule!(p(), [[]])]);
+        assert_eq!(reduct.as_slice(), [crule!(p(), [[]])]);
     }
 }

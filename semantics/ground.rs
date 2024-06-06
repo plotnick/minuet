@@ -4,6 +4,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use thiserror::Error;
+
 use minuet_syntax::*;
 
 use crate::generate::combinations_mixed;
@@ -23,21 +25,43 @@ pub type Universe = BTreeSet<Value>;
 /// Ungrounded symbolic functions (see "ASP" § 6.6).
 pub type Functions = BTreeSet<Application<Term>>;
 
+/// Things that may go wrong during grounding.
+#[derive(Clone, Debug, Error)]
+#[error("Unable to ground")]
+pub enum GroundingError {}
+
 /// Terms that can contain variables may be _grounded_, wherein we replace
-/// all variables with all possible values that can be bound to them.
+/// all variables with all possible values that can be bound to them. This
+/// trait represents elements for which this replacement is possible: it
+/// enables gathering the data needed for grounding and performing the
+/// replacments for a particular set of `Bindings`.
 pub trait Groundable {
     type Ground;
+    type Error;
 
+    /// Return `true` if the element is already ground.
     fn is_ground(&self) -> bool;
-    fn ground_with(self, bindings: &Bindings) -> Self::Ground;
-    fn ground(self) -> Self::Ground
+
+    /// Perform the bindings in `Bindings` and return a grounded
+    /// (or more nearly grounded) element.
+    fn ground_with(self, bindings: &Bindings) -> Result<Self::Ground, Self::Error>;
+
+    /// Convenience method: ground with an empty set of bindings.
+    /// Trivially grounds any element for which `is_ground` returns true.
+    fn ground(self) -> Result<Self::Ground, Self::Error>
     where
         Self: Sized,
     {
         self.ground_with(&Bindings::new())
     }
+
+    /// Collect the constants occuring in this element.
     fn constants(&self, universe: &mut Universe);
+
+    /// Collect the variables occuring in this element.
     fn variables(&self, names: &mut Names);
+
+    /// Collect the functions occuring in this element.
     fn functions(&self, functions: &mut Functions);
 }
 
@@ -91,6 +115,7 @@ impl fmt::Display for GroundTerm {
 
 impl Groundable for Term {
     type Ground = GroundTerm;
+    type Error = GroundingError;
 
     fn is_ground(&self) -> bool {
         use Term::*;
@@ -104,17 +129,21 @@ impl Groundable for Term {
         }
     }
 
-    fn ground_with(self, bindings: &Bindings) -> GroundTerm {
+    fn ground_with(self, bindings: &Bindings) -> Result<Self::Ground, Self::Error> {
         use Term::*;
         match self {
-            Constant(c) => GroundTerm::constant(Value::Constant(c)),
-            Variable(name) => GroundTerm::constant(bindings[&name].clone()),
-            Function(f) => GroundTerm::constant(Value::Function(f.ground_with(bindings))),
-            Pool(p) => GroundTerm::Pool(p.ground_with(bindings)),
-            UnaryOperation(op, x) => GroundTerm::unary_operation(op, x.ground_with(bindings)),
-            BinaryOperation(x, op, y) => {
-                GroundTerm::binary_operation(x.ground_with(bindings), op, y.ground_with(bindings))
-            }
+            Constant(c) => Ok(GroundTerm::constant(Value::Constant(c))),
+            Variable(name) => Ok(GroundTerm::constant(bindings[&name].clone())),
+            Function(f) => Ok(GroundTerm::constant(Value::Function(
+                f.ground_with(bindings)?,
+            ))),
+            Pool(p) => Ok(GroundTerm::Pool(p.ground_with(bindings)?)),
+            UnaryOperation(op, x) => Ok(GroundTerm::unary_operation(op, x.ground_with(bindings)?)),
+            BinaryOperation(x, op, y) => Ok(GroundTerm::binary_operation(
+                x.ground_with(bindings)?,
+                op,
+                y.ground_with(bindings)?,
+            )),
         }
     }
 
@@ -146,6 +175,7 @@ impl Groundable for Term {
 
 impl Groundable for Pool<Term> {
     type Ground = Pool<GroundTerm>;
+    type Error = GroundingError;
 
     fn is_ground(&self) -> bool {
         use Pool::*;
@@ -155,13 +185,19 @@ impl Groundable for Pool<Term> {
         }
     }
 
-    fn ground_with(self, bindings: &Bindings) -> Self::Ground {
+    fn ground_with(self, bindings: &Bindings) -> Result<Self::Ground, Self::Error> {
         use Pool::*;
         match self {
-            Interval(start, end) => {
-                Self::Ground::interval(start.ground_with(bindings), end.ground_with(bindings))
-            }
-            Set(terms) => Self::Ground::set(terms.into_iter().map(|t| t.ground_with(bindings))),
+            Interval(start, end) => Ok(Self::Ground::interval(
+                start.ground_with(bindings)?,
+                end.ground_with(bindings)?,
+            )),
+            Set(terms) => Ok(Self::Ground::Set(
+                terms
+                    .into_iter()
+                    .map(|t| t.ground_with(bindings))
+                    .collect::<Result<_, _>>()?,
+            )),
         }
     }
 
@@ -169,7 +205,7 @@ impl Groundable for Pool<Term> {
         use Pool::*;
         match self {
             Interval(i, j) if i.is_ground() && j.is_ground() => {
-                universe.extend(self.clone().ground().values())
+                universe.extend(self.clone().ground().expect("ungrounded interval").values())
             }
             Interval(i, j) => todo!("insufficiently instantiated interval {i}..{j}"),
             Set(terms) => {
@@ -214,12 +250,13 @@ impl Groundable for Pool<Term> {
 /// Auxiliary atoms are already ground.
 impl Groundable for Auxiliary {
     type Ground = Auxiliary;
+    type Error = GroundingError;
 
     fn is_ground(&self) -> bool {
         true
     }
-    fn ground_with(self, _: &Bindings) -> Self::Ground {
-        self
+    fn ground_with(self, _: &Bindings) -> Result<Self::Ground, Self::Error> {
+        Ok(self)
     }
     fn constants(&self, _: &mut Universe) {}
     fn variables(&self, _: &mut Names) {}
@@ -228,31 +265,34 @@ impl Groundable for Auxiliary {
 
 impl Groundable for Aggregate<Term> {
     type Ground = Aggregate<GroundTerm>;
+    type Error = GroundingError;
 
     /// An aggregate is ground if all of its choices are ground.
     fn is_ground(&self) -> bool {
         self.choices.iter().all(|choice| choice.is_ground())
     }
 
-    fn ground_with(self, bindings: &Bindings) -> Self::Ground {
+    fn ground_with(self, bindings: &Bindings) -> Result<Self::Ground, Self::Error> {
         let Aggregate { choices, bounds } = self;
-        Self::Ground {
+        Ok(Self::Ground {
             choices: choices
                 .into_iter()
                 .map(|choice| choice.ground_with(bindings))
-                .collect(),
-            bounds: bounds.map(
-                |AggregateBounds {
-                     lower_bound,
-                     upper_bound,
-                 }| {
-                    AggregateBounds::new(
-                        lower_bound.ground_with(bindings),
-                        upper_bound.ground_with(bindings),
-                    )
-                },
-            ),
-        }
+                .collect::<Result<_, _>>()?,
+            bounds: bounds
+                .map(
+                    |AggregateBounds {
+                         lower_bound,
+                         upper_bound,
+                     }| {
+                        Ok(AggregateBounds::new(
+                            lower_bound.ground_with(bindings)?,
+                            upper_bound.ground_with(bindings)?,
+                        ))
+                    },
+                )
+                .transpose()?,
+        })
     }
 
     fn constants(&self, universe: &mut Universe) {
@@ -276,6 +316,7 @@ impl Groundable for Aggregate<Term> {
 
 impl Groundable for Application<Term> {
     type Ground = Application<GroundTerm>;
+    type Error = GroundingError;
 
     /// A predicate application is ground if all of its arguments are ground.
     /// An arity 0 predicate is therefore always ground.
@@ -283,15 +324,15 @@ impl Groundable for Application<Term> {
         self.arguments.iter().all(|arg| arg.is_ground())
     }
 
-    fn ground_with(self, bindings: &Bindings) -> Self::Ground {
-        Self::Ground {
+    fn ground_with(self, bindings: &Bindings) -> Result<Self::Ground, Self::Error> {
+        Ok(Self::Ground {
             predicate: self.predicate,
             arguments: self
                 .arguments
                 .into_iter()
                 .map(|arg| arg.ground_with(bindings))
-                .collect(),
-        }
+                .collect::<Result<_, _>>()?,
+        })
     }
 
     fn constants(&self, universe: &mut Universe) {
@@ -315,6 +356,7 @@ impl Groundable for Application<Term> {
 
 impl Groundable for Atom<Term> {
     type Ground = Atom<GroundTerm>;
+    type Error = GroundingError;
 
     fn is_ground(&self) -> bool {
         use Atom::*;
@@ -325,12 +367,12 @@ impl Groundable for Atom<Term> {
         }
     }
 
-    fn ground_with(self, bindings: &Bindings) -> Self::Ground {
+    fn ground_with(self, bindings: &Bindings) -> Result<Self::Ground, Self::Error> {
         use Atom::*;
         match self {
-            Aux(aux) => Self::Ground::Aux(aux.ground_with(bindings)),
-            Agg(agg) => Self::Ground::Agg(agg.ground_with(bindings)),
-            App(app) => Self::Ground::App(app.ground_with(bindings)),
+            Aux(aux) => Ok(Self::Ground::Aux(aux.ground_with(bindings)?)),
+            Agg(agg) => Ok(Self::Ground::Agg(agg.ground_with(bindings)?)),
+            App(app) => Ok(Self::Ground::App(app.ground_with(bindings)?)),
         }
     }
 
@@ -364,6 +406,7 @@ impl Groundable for Atom<Term> {
 
 impl Groundable for Literal<Term> {
     type Ground = Literal<GroundTerm>;
+    type Error = GroundingError;
 
     fn is_ground(&self) -> bool {
         use Literal::*;
@@ -373,15 +416,17 @@ impl Groundable for Literal<Term> {
         }
     }
 
-    fn ground_with(self, bindings: &Bindings) -> Self::Ground {
+    fn ground_with(self, bindings: &Bindings) -> Result<Self::Ground, Self::Error> {
         use Literal::*;
         match self {
-            Positive(a) => Positive(a.ground_with(bindings)),
-            Negative(a) => Negative(a.ground_with(bindings)),
-            DoubleNegative(a) => DoubleNegative(a.ground_with(bindings)),
-            Relation(x, rel, y) => {
-                Literal::relation(x.ground_with(bindings), rel, y.ground_with(bindings))
-            }
+            Positive(a) => Ok(Positive(a.ground_with(bindings)?)),
+            Negative(a) => Ok(Negative(a.ground_with(bindings)?)),
+            DoubleNegative(a) => Ok(DoubleNegative(a.ground_with(bindings)?)),
+            Relation(x, rel, y) => Ok(Literal::relation(
+                x.ground_with(bindings)?,
+                rel,
+                y.ground_with(bindings)?,
+            )),
         }
     }
 
@@ -421,6 +466,7 @@ impl Groundable for Literal<Term> {
 
 impl Groundable for Program<BaseRule<Term>> {
     type Ground = Program<BaseRule<GroundTerm>>;
+    type Error = GroundingError;
 
     fn is_ground(&self) -> bool {
         self.iter().all(|rule| rule.is_ground())
@@ -428,7 +474,7 @@ impl Groundable for Program<BaseRule<Term>> {
 
     /// Find all constants and bind all variables to them in all possible ways.
     /// TODO: less naïve grounding strategy, inject initial bindings.
-    fn ground_with(self, _bindings: &Bindings) -> Self::Ground {
+    fn ground_with(self, _bindings: &Bindings) -> Result<Self::Ground, Self::Error> {
         let mut constants = Universe::new();
         self.constants(&mut constants);
         let constants = constants.into_iter().collect::<Vec<Value>>();
@@ -447,7 +493,7 @@ impl Groundable for Program<BaseRule<Term>> {
         let mut rules = ground_rules
             .into_iter()
             .map(|rule| rule.ground())
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, _>>()?;
 
         let m = constants.len();
         let n = variables.len();
@@ -461,11 +507,13 @@ impl Groundable for Program<BaseRule<Term>> {
                 var_rules
                     .iter()
                     .cloned()
-                    .map(|rule| rule.ground_with(&bindings)),
+                    .map(|rule| rule.ground_with(&bindings))
+                    .collect::<Result<Vec<_>, _>>()
+                    .expect("couldn't ground rule"),
             );
         });
 
-        Program::new(rules)
+        Ok(Program::new(rules))
     }
 
     fn constants(&self, universe: &mut Universe) {
@@ -489,6 +537,7 @@ impl Groundable for Program<BaseRule<Term>> {
 
 impl Groundable for BaseRule<Term> {
     type Ground = BaseRule<GroundTerm>;
+    type Error = GroundingError;
 
     fn is_ground(&self) -> bool {
         match self {
@@ -497,10 +546,10 @@ impl Groundable for BaseRule<Term> {
         }
     }
 
-    fn ground_with(self, bindings: &Bindings) -> Self::Ground {
+    fn ground_with(self, bindings: &Bindings) -> Result<Self::Ground, Self::Error> {
         match self {
-            Self::Choice(rule) => Self::Ground::Choice(rule.ground_with(bindings)),
-            Self::Disjunctive(rule) => Self::Ground::Disjunctive(rule.ground_with(bindings)),
+            Self::Choice(rule) => Ok(Self::Ground::Choice(rule.ground_with(bindings)?)),
+            Self::Disjunctive(rule) => Ok(Self::Ground::Disjunctive(rule.ground_with(bindings)?)),
         }
     }
 
@@ -528,16 +577,21 @@ impl Groundable for BaseRule<Term> {
 
 impl Groundable for ChoiceRule<Term> {
     type Ground = ChoiceRule<GroundTerm>;
+    type Error = GroundingError;
 
     fn is_ground(&self) -> bool {
         self.head.is_ground() && self.body.iter().all(|b| b.is_ground())
     }
 
-    fn ground_with(self, bindings: &Bindings) -> Self::Ground {
-        Self::Ground::new(
-            self.head.ground_with(bindings),
-            self.body.into_iter().map(|b| b.ground_with(bindings)),
-        )
+    fn ground_with(self, bindings: &Bindings) -> Result<Self::Ground, Self::Error> {
+        Ok(Self::Ground {
+            head: self.head.ground_with(bindings)?,
+            body: self
+                .body
+                .into_iter()
+                .map(|b| b.ground_with(bindings))
+                .collect::<Result<_, _>>()?,
+        })
     }
 
     fn constants(&self, universe: &mut Universe) {
@@ -564,16 +618,25 @@ impl Groundable for ChoiceRule<Term> {
 
 impl Groundable for Rule<Term> {
     type Ground = Rule<GroundTerm>;
+    type Error = GroundingError;
 
     fn is_ground(&self) -> bool {
         self.head.iter().all(|h| h.is_ground()) && self.body.iter().all(|b| b.is_ground())
     }
 
-    fn ground_with(self, bindings: &Bindings) -> Self::Ground {
-        Self::Ground::new(
-            self.head.into_iter().map(|h| h.ground_with(bindings)),
-            self.body.into_iter().map(|b| b.ground_with(bindings)),
-        )
+    fn ground_with(self, bindings: &Bindings) -> Result<Self::Ground, Self::Error> {
+        Ok(Self::Ground {
+            head: self
+                .head
+                .into_iter()
+                .map(|h| h.ground_with(bindings))
+                .collect::<Result<_, _>>()?,
+            body: self
+                .body
+                .into_iter()
+                .map(|b| b.ground_with(bindings))
+                .collect::<Result<_, _>>()?,
+        })
     }
 
     fn constants(&self, universe: &mut Universe) {
@@ -601,5 +664,16 @@ impl Groundable for Rule<Term> {
         for b in &self.body {
             b.functions(functions);
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    /// Test helper macro.
+    #[macro_export]
+    macro_rules! ground {
+        ($e: expr) => {
+            $e.ground().expect("can't ground test element")
+        };
     }
 }
