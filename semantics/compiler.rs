@@ -363,10 +363,8 @@ impl<'a> Iterator for AnswerStep<'a> {
 mod test {
     use minuet_macro::minuet;
 
-    use crate::ground;
-    use crate::ground::Groundable as _;
-
     use super::*;
+    use crate::ground;
 
     macro_rules! answers {
         {[] => [$($answers: tt)*]} => {

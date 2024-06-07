@@ -106,7 +106,13 @@ pub enum PreprocessingError {
     Grounding(#[from] GroundingError),
 }
 
-impl Program<BaseRule<Term>> {
+/// A program that has not yet been preprocessed.
+pub type BaseProgram = Program<BaseRule<Term>>;
+
+/// A program that has been grounded, but not otherwise preprocessed.
+pub type GroundProgram = Program<BaseRule<GroundTerm>>;
+
+impl BaseProgram {
     /// A convenience method to "skip to the end": run through each
     /// preprocessing step in sequence and return the result.
     pub fn preprocess(self, trace: Trace) -> Result<Program<CompleteRule>, PreprocessingError> {
@@ -121,11 +127,9 @@ impl Program<BaseRule<Term>> {
 
     /// The first step in program preprocessing is grounding: replacing
     /// terms over variables with ground (variable-free) terms. See the
-    /// `Groundable` trait for details.
-    pub fn ground_program(
-        self,
-        trace: Trace,
-    ) -> Result<Program<BaseRule<GroundTerm>>, GroundingError> {
+    /// [`Groundable`](crate::ground::Groundable) and
+    /// [`Grounder`](crate::ground::Grounder) traits for details.
+    pub fn ground_program(self, trace: Trace) -> Result<GroundProgram, GroundingError> {
         let grounded = self.ground()?;
         trace!(trace, Preprocess, "Grounded program:\n{grounded}");
         Ok(grounded)

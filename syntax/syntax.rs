@@ -646,7 +646,7 @@ where
 /// and `c()` are included in the model. The head of a disjunctive rule
 /// like `a() or b() or c()` instead means that any of the three atoms may
 /// be in the model.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum BaseRule<T> {
     Choice(ChoiceRule<T>),
     Disjunctive(Rule<T>),
@@ -665,7 +665,7 @@ where
 }
 
 /// A choice rule has a single aggregate atom as its head.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ChoiceRule<T> {
     pub head: Aggregate<T>,
     pub body: Vec<Literal<T>>,
@@ -703,7 +703,7 @@ where
 
 /// Rules generally have a disjunctive head and a conjunctive body,
 /// but at this level we'll just collect vectors.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Rule<T> {
     pub head: Vec<Literal<T>>,
     pub body: Vec<Literal<T>>,
