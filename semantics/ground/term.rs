@@ -49,7 +49,7 @@ impl fmt::Display for GroundTerm {
             UnaryOperation(Abs, x) => f.write_fmt(format_args!("|{x}|")),
             UnaryOperation(Neg, x) => f.write_fmt(format_args!("-{x}")),
             UnaryOperation(Not, x) => f.write_fmt(format_args!("~{x}")),
-            BinaryOperation(x, op, y) => f.write_fmt(format_args!("{x} {op} {y}")),
+            BinaryOperation(x, op, y) => f.write_fmt(format_args!("({x} {op} {y})")),
         }
     }
 }

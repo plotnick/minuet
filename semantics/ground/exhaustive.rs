@@ -1,13 +1,15 @@
-//! A simple strategy for grounding: bind every variable to every
-//! possible value. It is not a good strategy, though.
+//! A naïve, no-good strategy for grounding: bind every variable
+//! to every possible constant value.
 
-use minuet_syntax::{BaseRule, Symbol, Term};
+use minuet_syntax::*;
 
 use crate::generate::combinations_mixed;
 use crate::program::{BaseProgram, Program};
 use crate::values::Value;
 
-use super::{Bindings, Groundable, Grounder, Names, Universe};
+use super::{
+    Bindings, Constants, Groundable, Grounder, IsGround, Names, Safety, Universe, Variables,
+};
 
 /// **DEAD DOVE! DO NOT EAT!**
 ///
@@ -33,14 +35,12 @@ impl Grounder<BaseProgram> for ExhaustiveGrounder {
         self,
         _bindings: &Bindings,
     ) -> Result<<BaseProgram as Groundable>::Ground, <BaseProgram as Groundable>::Error> {
-        let mut constants = Universe::new();
-        self.program.constants(&mut constants);
-        let constants = constants.into_iter().collect::<Vec<Value>>();
+        for rule in self.program.iter() {
+            rule.check_safety()?;
+        }
 
-        let mut variables = Names::new();
-        self.program.variables(&mut variables);
-        let variables = variables.into_iter().collect::<Vec<Symbol>>();
-
+        let constants = Vec::from_iter(self.program.constants());
+        let variables = Vec::from_iter(self.program.variables());
         let (ground_rules, var_rules): (Vec<_>, Vec<_>) =
             self.program.into_iter().partition(|r| r.is_ground());
         let mut rules = ground_rules

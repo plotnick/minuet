@@ -10,6 +10,7 @@ mod lexer;
 mod minuet1;
 mod parser;
 mod tokens;
+mod visit;
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -20,6 +21,7 @@ pub use lexer::{Lex, Token};
 pub use minuet1::{Minuet1Lexer, Minuet1Parser, Minuet1Token};
 pub use parser::Parse;
 pub use tokens::Tokens;
+pub use visit::*;
 
 /// Uninterpreted element that names itself, a predicate, or a variable.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]

@@ -600,12 +600,12 @@ mod test {
     /// This program needs a bit of grounding.
     #[test]
     fn ground_trivial_1() {
-        let rules = [rule!([pos!(p(x))], [pos!(p(1)), pos!(p(2))])];
+        let rules = [rule!([pos!(p(x))], [rel!(x, Eq, 1), rel!(x, Eq, 2)])];
         assert_eq!(
             ground!(Program::new(rules)).as_slice(),
             [
-                ground!(rule!([pos!(p(1))], [pos!(p(1)), pos!(p(2))])),
-                ground!(rule!([pos!(p(2))], [pos!(p(1)), pos!(p(2))])),
+                ground!(rule!([pos!(p(1))], [rel!(1, Eq, 1), rel!(1, Eq, 2)])),
+                ground!(rule!([pos!(p(2))], [rel!(2, Eq, 1), rel!(2, Eq, 2)])),
             ]
         );
     }

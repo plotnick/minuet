@@ -3,10 +3,12 @@
 
 #![allow(unused_imports)]
 
+mod collectors;
 mod exhaustive;
 mod groundable;
 mod grounder;
 mod iterative;
+mod safety;
 mod term;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -17,9 +19,11 @@ use minuet_syntax::*;
 use crate::values::Value;
 
 // Re-exports.
+pub use collectors::{Constants, ContainsVariable, IsGround, Variables};
 pub(crate) use exhaustive::ExhaustiveGrounder;
 pub use groundable::Groundable;
 pub use grounder::Grounder;
+pub use safety::Safety;
 pub use term::GroundTerm;
 
 /// Map variable names to constant values (in order to ground them).
@@ -33,12 +37,16 @@ pub type Names = BTreeSet<Symbol>;
 pub type Universe = BTreeSet<Value>;
 
 /// Ungrounded symbolic functions (see "ASP" § 6.6).
+#[allow(dead_code)]
 pub type Functions = BTreeSet<Application<Term>>;
 
 /// Things that may go wrong during grounding.
 #[derive(Clone, Debug, Error)]
 #[error("Unable to ground")]
-pub enum GroundingError {}
+pub enum GroundingError {
+    #[error("unsafe variable: `{0}` does not appear in any positive body literal")]
+    UnsafeVariable(Symbol),
+}
 
 #[cfg(test)]
 mod test {

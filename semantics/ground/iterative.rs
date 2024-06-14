@@ -1,4 +1,4 @@
-//! A quite good strategy for grounding: start with the facts,
+//! A quite-good strategy for grounding: start with the facts,
 //! and iteratively collect bindings.
 
 #![allow(dead_code)]
