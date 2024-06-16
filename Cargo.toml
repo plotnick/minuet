@@ -4,6 +4,7 @@ resolver = "2"
 
 [workspace.dependencies]
 anyhow = "1.0"
+atty = "0.2"
 gray-codes = "0.1"
 nom = "7.1"
 proc-macro2 = "1.0"

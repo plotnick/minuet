@@ -10,5 +10,5 @@ mod formula;
 mod image;
 mod program;
 
-pub use compiler::XccCompiler;
+pub use compiler::{format_answer, XccCompiler};
 pub use minuet_solver::XccError;
