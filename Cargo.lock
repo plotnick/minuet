@@ -59,6 +59,7 @@ name = "minuet-macro"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "minuet-ground",
  "minuet-syntax",
  "nom",
  "proc-macro2",

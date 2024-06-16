@@ -11,6 +11,7 @@ use proc_macro::{Delimiter, TokenStream, TokenTree};
 use proc_macro2::Span;
 use quote::{quote, quote_spanned};
 
+use minuet_ground::{GroundingError, Safety as _};
 use minuet_syntax::{
     Lex as _, Minuet1Lexer, Minuet1Parser, Minuet1Token, Parse as _, Symbol as Minuet1Symbol,
     Tokens,
@@ -168,10 +169,38 @@ pub fn minuet(input: TokenStream) -> TokenStream {
     match translate_tokens(input) {
         Ok(tokens) => {
             match Minuet1Parser::parse(Tokens::new(&tokens[..])) {
-                Ok((unused, minuet_program)) => {
+                Ok((unused, rules)) => {
                     if unused.is_empty() {
-                        // All input parsed, translate back to Rust tokens.
-                        quote!(vec![#(#minuet_program),*] as Vec<BaseRule<Term>>).into()
+                        // All input parsed successfully! Check rules for safety.
+                        let mut rule_tokens = &tokens[..];
+                        for rule in rules.iter() {
+                            match &rule.check_safety() {
+                                Ok(()) => (),
+                                Err(e @ GroundingError::UnsafeVariable(v)) => {
+                                    return macro_error!(
+                                        "{e}",
+                                        rule_tokens
+                                            .iter()
+                                            .find(|t| {
+                                                matches!(&t.token, Minuet1Token::Symbol(s) if s == v)
+                                            })
+                                            .expect("missing unsafe varaible token")
+                                            .source
+                                    );
+                                }
+                            }
+
+                            // Advance to the next rule's tokens.
+                            (_, rule_tokens) = rule_tokens.split_at(
+                                rule_tokens
+                                    .iter()
+                                    .position(|t| matches!(&t.token, Minuet1Token::Semi))
+                                    .unwrap_or(rule_tokens.len()),
+                            );
+                        }
+
+                        // Translate back to Rust tokens.
+                        quote!(Vec::<BaseRule<Term>>::from_iter([#(#rules),*])).into()
                     } else {
                         macro_error!(
                             "Minuet tokens left over: {unused:?}",
@@ -180,7 +209,7 @@ pub fn minuet(input: TokenStream) -> TokenStream {
                     }
                 }
                 Err(e) => match e {
-                    nom::Err::Incomplete(_) => unreachable!("incomplete stream"),
+                    nom::Err::Incomplete(_) => macro_error!("incomplete stream"),
                     nom::Err::Error(e) | nom::Err::Failure(e) => {
                         let c = e.code;
                         macro_error!(

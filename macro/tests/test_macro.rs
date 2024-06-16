@@ -16,32 +16,37 @@ fn test_macro() {
         minuet!(foo() or bar() if baz()),
         [rule!([pos!(foo()), pos!(bar())], [pos!(baz())])]
     );
-    assert_eq!(minuet!((x = 0)), minuet!(x = 0));
     assert_eq!(
-        minuet!(x = 0 or x != 0 or x > 0 or x < 0 or x >= 0 or x <= 0),
-        [rule!([
-            rel!(x, Eq, 0),
-            rel!(x, Ne, 0),
-            rel!(x, Gt, 0),
-            rel!(x, Lt, 0),
-            rel!(x, Geq, 0),
-            rel!(x, Leq, 0),
-        ])]
-    );
-    assert_eq!(
-        minuet!(|x| = 0 or -x = 0),
-        [rule!([
-            rel!(unary!(Abs, x), Eq, 0),
-            rel!(unary!(Neg, x), Eq, 0),
-            //rel!(unary!(Not, ..), ..),
-        ])]
-    );
-
-    assert_eq!(
-        minuet!(foo() if x = 0 and not bar(x) and not not bar(baz())),
+        minuet!(foo(x) if x = 0 and not bar(x) and not not bar(baz())),
         [rule!(
-            [pos!(foo())],
+            [pos!(foo(x))],
             [rel!(x, Eq, 0), neg!(bar(x)), nneg!(bar(baz()))]
+        )]
+    );
+    assert_eq!(minuet!(p(x) if (x = 0)), minuet!(p(x) if x = 0));
+    assert_eq!(
+        minuet!(p(x) if x = 0 and x != 0 and x > 0 and x < 0 and x >= 0 and x <= 0),
+        [rule!(
+            [pos!(p(x))],
+            [
+                rel!(x, Eq, 0),
+                rel!(x, Ne, 0),
+                rel!(x, Gt, 0),
+                rel!(x, Lt, 0),
+                rel!(x, Geq, 0),
+                rel!(x, Leq, 0),
+            ]
+        )]
+    );
+    assert_eq!(
+        minuet!(p(x) if |x| = 0 and -x = 0),
+        [rule!(
+            [pos!(p(x))],
+            [
+                rel!(unary!(Abs, x), Eq, 0),
+                rel!(unary!(Neg, x), Eq, 0),
+                //rel!(unary!(Not, ..), ..),
+            ]
         )]
     );
 }

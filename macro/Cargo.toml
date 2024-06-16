@@ -9,6 +9,7 @@ proc-macro = true
 
 [dependencies]
 anyhow.workspace = true
+minuet-ground = { path = "../ground" }
 minuet-syntax = { path = "../syntax", features = ["macros", "to-rust"] }
 nom.workspace = true
 proc-macro2.workspace = true
