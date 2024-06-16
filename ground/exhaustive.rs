@@ -3,12 +3,9 @@
 
 use minuet_syntax::*;
 
-use crate::generate::combinations_mixed;
-use crate::program::{BaseProgram, Program};
-use crate::values::Value;
-
 use super::{
-    Bindings, Constants, Groundable, Grounder, IsGround, Names, Safety, Universe, Variables,
+    combinations_mixed, Bindings, Constants, GroundTerm, Groundable, Grounder, GroundingError,
+    IsGround, Names, Safety, Universe, Value, Variables,
 };
 
 /// **DEAD DOVE! DO NOT EAT!**
@@ -16,33 +13,30 @@ use super::{
 /// Bind every variable in a program to every constant.
 /// Should not to be used directly.
 pub(crate) struct ExhaustiveGrounder {
-    program: BaseProgram,
+    rules: Vec<BaseRule<Term>>,
 }
 
 impl ExhaustiveGrounder {
-    pub(crate) fn new(program: BaseProgram) -> Self {
-        Self { program }
+    pub(crate) fn new(rules: Vec<BaseRule<Term>>) -> Self {
+        Self { rules }
     }
 }
 
-impl Grounder<BaseProgram> for ExhaustiveGrounder {
+impl Grounder<Vec<BaseRule<Term>>> for ExhaustiveGrounder {
     /// Find all constants and bind all variables to them in all possible ways.
     /// Does not handle recursive symbolic functions at all. Importantly, produces
     /// many groundings that are not supported by the facts of the program.
     ///
     /// TODO: ground symbolic functions, inject initial bindings.
-    fn ground(
-        self,
-        _bindings: &Bindings,
-    ) -> Result<<BaseProgram as Groundable>::Ground, <BaseProgram as Groundable>::Error> {
-        for rule in self.program.iter() {
+    fn ground(self, _bindings: &Bindings) -> Result<Vec<BaseRule<GroundTerm>>, GroundingError> {
+        for rule in self.rules.iter() {
             rule.check_safety()?;
         }
 
-        let constants = Vec::from_iter(self.program.constants());
-        let variables = Vec::from_iter(self.program.variables());
+        let constants = Vec::from_iter(self.rules.constants());
+        let variables = Vec::from_iter(self.rules.variables());
         let (ground_rules, var_rules): (Vec<_>, Vec<_>) =
-            self.program.into_iter().partition(|r| r.is_ground());
+            self.rules.into_iter().partition(|r| r.is_ground());
         let mut rules = ground_rules
             .into_iter()
             .map(|rule| rule.ground().expect("rule should ground trivially"))
@@ -69,14 +63,13 @@ impl Grounder<BaseProgram> for ExhaustiveGrounder {
         rules.sort();
         rules.dedup();
 
-        Ok(Program::new(rules))
+        Ok(rules)
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use minuet_syntax::*;
 
     macro_rules! xground {
         ($elt: expr) => {
@@ -89,32 +82,32 @@ mod test {
     #[test]
     fn ground_0() {
         assert_eq!(
-            xground!(Program::new([rule!([pos!(a(0))], [])])),
-            xground!(Program::new([rule!([pos!(a(0))], [])])),
+            xground!(vec![rule!([pos!(a(0))], [])]),
+            xground!(vec![rule!([pos!(a(0))], [])]),
         );
     }
 
     #[test]
     fn ground_1() {
         assert_eq!(
-            xground!(Program::new([rule!([pos!(a(x))], [rel!(x, Eq, 1)])])),
-            xground!(Program::new([rule!([pos!(a(1))], [rel!(1, Eq, 1)])])),
+            xground!(vec![rule!([pos!(a(x))], [rel!(x, Eq, 1)])]),
+            xground!(vec![rule!([pos!(a(1))], [rel!(1, Eq, 1)])]),
         );
     }
 
     #[test]
     fn ground_2() {
         assert_eq!(
-            xground!(Program::new([
+            xground!(vec![
                 rule!([pos!(a(x))], [rel!(x, Eq, 1)]),
                 rule!([pos!(a(x))], [rel!(x, Eq, 2)]),
-            ])),
-            xground!(Program::new([
+            ]),
+            xground!(vec![
                 rule!([pos!(a(1))], [rel!(1, Eq, 1)]),
                 rule!([pos!(a(1))], [rel!(1, Eq, 2)]),
                 rule!([pos!(a(2))], [rel!(2, Eq, 1)]),
                 rule!([pos!(a(2))], [rel!(2, Eq, 2)]),
-            ])),
+            ]),
         );
     }
 }

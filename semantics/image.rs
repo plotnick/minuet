@@ -4,11 +4,10 @@ use std::collections::BTreeSet;
 
 use gray_codes::{InclusionExclusion, SetMutation};
 
+use minuet_ground::*;
 use minuet_syntax::*;
 
 use crate::clause::*;
-use crate::ground::*;
-use crate::values::*;
 
 /// Propositional images of some expressions may be either conjunctive or
 /// disjunctive, depending on whether they occur in the head or the body.
@@ -170,7 +169,6 @@ mod test {
 
     use minuet_tracer::Trace;
 
-    use crate::ground;
     use crate::program::{Program, PropositionalRule};
 
     #[test]

@@ -5,10 +5,10 @@
 
 use std::collections::BTreeSet;
 
+use minuet_ground::*;
 use minuet_syntax::*;
 
 use crate::clause::*;
-use crate::ground::*;
 
 /// An interpretation is a set of ground atoms interpreted as true.
 /// Any atom not contained in the set is interpreted as false.
@@ -192,7 +192,7 @@ mod test {
     #![allow(clippy::bool_assert_comparison)]
 
     use super::*;
-    use crate::ground;
+    use minuet_ground::ground;
 
     macro_rules! interp {
         [] => { Interpretation::new() };

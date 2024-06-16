@@ -1,5 +1,5 @@
 [workspace]
-members = ["command", "macro", "semantics", "solver", "syntax", "tracer"]
+members = ["command", "ground", "macro", "semantics", "solver", "syntax", "tracer"]
 resolver = "2"
 
 [workspace.dependencies]

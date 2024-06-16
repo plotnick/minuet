@@ -33,12 +33,12 @@ use std::collections::BTreeSet;
 use gray_codes::{InclusionExclusion, SetMutation};
 use thiserror::Error;
 
+use minuet_ground::*;
 use minuet_solver::*;
 use minuet_syntax::*;
 use minuet_tracer::*;
 
 use crate::formula::*;
-use crate::ground::*;
 use crate::program::*;
 
 /// A stable model of the program (Gelfond & Lifschitz 1988).
@@ -364,7 +364,6 @@ mod test {
     use minuet_macro::minuet;
 
     use super::*;
-    use crate::ground;
 
     macro_rules! answers {
         {[] => [$($answers: tt)*]} => {

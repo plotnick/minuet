@@ -7,12 +7,8 @@
 mod clause;
 mod compiler;
 mod formula;
-mod generate;
-mod ground;
 mod image;
 mod program;
-mod values;
 
 pub use compiler::XccCompiler;
 pub use minuet_solver::XccError;
-pub use program::Program;

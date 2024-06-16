@@ -2,11 +2,9 @@
 
 use minuet_syntax::*;
 
-use crate::program::{BaseProgram, GroundProgram, Program};
-use crate::values::{Value, Values as _};
-
 use super::{
     Bindings, ExhaustiveGrounder, Functions, GroundTerm, Grounder, GroundingError, Names, Universe,
+    Value,
 };
 
 /// Syntactic elements that contain variables can be _grounded_, where we
@@ -164,8 +162,8 @@ impl Groundable for Literal<Term> {
     }
 }
 
-impl Groundable for BaseProgram {
-    type Ground = GroundProgram;
+impl Groundable for Vec<BaseRule<Term>> {
+    type Ground = Vec<BaseRule<GroundTerm>>;
     type Error = GroundingError;
 
     /// Ground with the default grounder.

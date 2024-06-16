@@ -1,0 +1,15 @@
+[package]
+name = "minuet-ground"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+path = "ground.rs"
+
+[dependencies]
+minuet-syntax = { path = "../syntax", features = ["macros"] }
+thiserror.workspace = true
+
+[features]
+default = []
+macros = []

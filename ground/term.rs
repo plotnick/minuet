@@ -4,7 +4,7 @@ use std::fmt;
 
 use minuet_syntax::*;
 
-use crate::values::Value;
+use crate::Value;
 
 /// Ground (variable-free) element that represents a fixed set
 /// of constant values.

@@ -11,14 +11,13 @@ use std::ops::Index;
 
 use thiserror::Error;
 
+use minuet_ground::*;
 use minuet_syntax::*;
 use minuet_tracer::*;
 
 use crate::clause::{Clause, Conjunction, Disjunction, Dnf};
 use crate::formula::{Atoms, Formula, Interpretation};
-use crate::ground::{GroundTerm, Groundable as _, GroundingError};
 use crate::image::{Bounds as _, Context, PropositionalImage as _};
-use crate::values::Value;
 
 /// A collection of rules.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -127,16 +126,25 @@ impl BaseProgram {
 
     /// The first step in program preprocessing is grounding: replacing
     /// terms over variables with ground (variable-free) terms. See the
-    /// [`Groundable`](crate::ground::Groundable) and
-    /// [`Grounder`](crate::ground::Grounder) traits for details.
+    /// [`minuet_ground::Groundable`] and [`minuet_ground::Grounder`]
+    /// traits for details.
     pub fn ground_program(self, trace: Trace) -> Result<GroundProgram, GroundingError> {
-        let grounded = self.ground()?;
+        let grounded = Program::new(self.ground()?);
         trace!(trace, Preprocess, "Grounded program:\n{grounded}");
         Ok(grounded)
     }
 }
 
-impl Program<BaseRule<GroundTerm>> {
+impl Groundable for BaseProgram {
+    type Ground = GroundProgram;
+    type Error = GroundingError;
+
+    fn ground_with(self, bindings: &Bindings) -> Result<Self::Ground, Self::Error> {
+        Ok(Self::Ground::new(self.0.ground_with(bindings)?))
+    }
+}
+
+impl GroundProgram {
     /// The next step in program preprocessing is finding the propositional
     /// image (logical formula representation) of each (ground) rule.
     pub fn image(self, trace: Trace) -> Program<PropositionalRule> {
@@ -527,7 +535,7 @@ impl CompleteRule {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::ground;
+    use minuet_ground::ground;
 
     macro_rules! nrule {
         ([$($head: expr),*], [$($body: expr),*]) => {

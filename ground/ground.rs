@@ -4,27 +4,29 @@
 #![allow(unused_imports)]
 
 mod collectors;
+mod combinations;
 mod exhaustive;
 mod groundable;
 mod grounder;
 mod iterative;
 mod safety;
 mod term;
+mod values;
 
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
 use minuet_syntax::*;
 
-use crate::values::Value;
-
 // Re-exports.
 pub use collectors::{Constants, ContainsVariable, IsGround, Variables};
+pub use combinations::{combinations, combinations_mixed};
 pub(crate) use exhaustive::ExhaustiveGrounder;
 pub use groundable::Groundable;
 pub use grounder::Grounder;
 pub use safety::Safety;
 pub use term::GroundTerm;
+pub use values::{all_values, for_all_value_pairs, Value, ValueSet, Values};
 
 /// Map variable names to constant values (in order to ground them).
 pub type Bindings = BTreeMap<Symbol, Value>;
@@ -48,9 +50,13 @@ pub enum GroundingError {
     UnsafeVariable(Symbol),
 }
 
-#[cfg(test)]
-mod test {
-    /// Test helper macro.
+/// Test helper macros.
+///
+/// This should be behind `#[cfg(test)]`, but [cargo can't
+/// currently export test code across crates](https://github.com/rust-lang/cargo/issues/8379).
+#[cfg(feature = "macros")]
+mod macros {
+    /// Ground an element or die trying.
     #[macro_export]
     macro_rules! ground {
         ($e: expr) => {

@@ -1,6 +1,5 @@
 //! Knuth Algorithm 7.2.1.1M (_Mixed-radix generation_).
 
-#[allow(dead_code)]
 pub fn combinations(n: usize, f: impl FnMut(&[usize])) {
     combinations_mixed(n, &vec![n; n], f)
 }

@@ -3,17 +3,14 @@
 
 use minuet_syntax::*;
 
-use crate::program::BaseProgram;
-use crate::values::Values as _;
-
-use super::{Groundable, Names, Universe, Value};
+use super::{Groundable, Names, Universe, Value, Values as _};
 
 /// Collect all of the constant values occuring in an element.
 pub trait Constants {
     fn constants(&self) -> impl IntoIterator<Item = Value>;
 }
 
-impl Constants for BaseProgram {
+impl Constants for Vec<BaseRule<Term>> {
     fn constants(&self) -> impl IntoIterator<Item = Value> {
         let mut collector = ConstantCollector::default();
         for rule in self.iter() {
@@ -61,7 +58,7 @@ impl Variables for BaseRule<Term> {
     }
 }
 
-impl Variables for BaseProgram {
+impl Variables for Vec<BaseRule<Term>> {
     fn variables(&self) -> impl IntoIterator<Item = Symbol> {
         let mut collector = VariableCollector::default();
         for rule in self.iter() {

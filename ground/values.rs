@@ -9,8 +9,8 @@ use std::ops;
 
 use minuet_syntax::*;
 
-use crate::generate::combinations_mixed;
-use crate::ground::*;
+use crate::combinations::combinations_mixed;
+use crate::term::GroundTerm;
 
 /// A *value* is either a constant (name, number) or
 /// a *symbolic function* (see "ASP" § 6.6).
@@ -294,7 +294,7 @@ impl ops::Not for ValueSet {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::ground;
+    use crate::{ground, Groundable};
 
     macro_rules! values {
         [$($val: literal),*] => {

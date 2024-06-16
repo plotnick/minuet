@@ -47,6 +47,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "minuet-ground"
+version = "0.0.1"
+dependencies = [
+ "minuet-syntax",
+ "thiserror",
+]
+
+[[package]]
 name = "minuet-macro"
 version = "0.0.1"
 dependencies = [
@@ -62,6 +70,7 @@ name = "minuet-semantics"
 version = "0.0.1"
 dependencies = [
  "gray-codes",
+ "minuet-ground",
  "minuet-macro",
  "minuet-solver",
  "minuet-syntax",

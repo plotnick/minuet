@@ -14,6 +14,6 @@ quote.workspace = true
 quote.optional = true
 
 [features]
-default = ["macros"]
+default = []
 macros = []
 to-rust = ["quote", "proc-macro2"]

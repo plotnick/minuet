@@ -9,9 +9,8 @@ use std::fmt;
 use std::ops::Index;
 use std::vec;
 
+use minuet_ground::*;
 use minuet_syntax::*;
-
-use crate::ground::*;
 
 /// Conjunction means _and_. It is spelled "∧" in propositional logic.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -342,7 +341,6 @@ impl Dnf {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::ground;
 
     /// This is the only place we allow zero-argument predicates
     /// to drop the parenthesis.
