@@ -1,12 +1,10 @@
 //! Test compile-time parsing of Minuet programs.
-//!
-//! TODO: Use [trybuild](https://crates.io/crates/trybuild).
 
 use minuet_macro::minuet;
 use minuet_syntax::*;
 
 #[test]
-fn test_macro() {
+fn ok() {
     assert_eq!(minuet!(), []);
     assert_eq!(minuet!(if), [minuet_syntax::rule!([])]);
     assert_eq!(minuet!(foo()), [rule!([pos!(foo())])]);
@@ -49,4 +47,9 @@ fn test_macro() {
             ]
         )]
     );
+}
+
+#[test]
+fn err() {
+    trybuild::TestCases::new().compile_fail("tests/err/*.rs");
 }

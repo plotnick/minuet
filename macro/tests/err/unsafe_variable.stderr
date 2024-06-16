@@ -1,0 +1,5 @@
+error: unsafe variable: `x` does not appear in any positive body literal
+ --> tests/err/unsafe_variable.rs:7:13
+  |
+7 |         foo(x) if x > 0;
+  |             ^

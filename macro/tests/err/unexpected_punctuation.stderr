@@ -1,0 +1,5 @@
+error: Minuet lexing failed: unexpected punctuation '@'
+ --> tests/err/unexpected_punctuation.rs:4:16
+  |
+4 |     minuet!(foo@bar);
+  |                ^

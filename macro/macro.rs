@@ -152,6 +152,7 @@ fn translate_tokens(input: TokenStream) -> Result<Vec<Token>> {
         .collect())
 }
 
+/// Signal a compilation error (at a specific span).
 macro_rules! macro_error {
     ($msg: literal) => {{
         let msg = format!($msg);
@@ -171,7 +172,8 @@ pub fn minuet(input: TokenStream) -> TokenStream {
             match Minuet1Parser::parse(Tokens::new(&tokens[..])) {
                 Ok((unused, rules)) => {
                     if unused.is_empty() {
-                        // All input parsed successfully! Check rules for safety.
+                        // All input parsed successfully!
+                        // Check rules for safety.
                         let mut rule_tokens = &tokens[..];
                         for rule in rules.iter() {
                             match &rule.check_safety() {
